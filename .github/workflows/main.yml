@@ -1,0 +1,28 @@
+name: Bot Trading BTC WITA
+
+on:
+  schedule:
+    # Berjalan setiap 1 jam (menggunakan waktu UTC). 
+    # Menit 0 setiap jam.
+    - cron: '0 * * * *' 
+  workflow_dispatch: # Supaya bisa di-klik manual untuk testing
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy matplotlib yfinance pytz requests
+
+      - name: Run Script
+        run: python main.py
