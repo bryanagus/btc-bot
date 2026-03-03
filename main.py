@@ -1,269 +1,433 @@
 # ==============================================================================
-# BTC QUANT GODMODE ENGINE v6.0
-# ABSOLUTE MAX LEVEL - INSTITUTIONAL DESK STYLE
+# BTC QUANT GODMODE PRO MAX ENGINE (TIMEFRAME 1 JAM)
+# Fitur: Ensemble Machine Learning, Monte Carlo, Kelly Risk Engine, 
+#        Multi-Source News, ADX, VWAP, Telegram Reporting & Charting
+# Zona Waktu: WITA (Asia/Makassar)
 # ==============================================================================
-
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import pytz
 import requests
+import os
+import warnings
+import urllib.request
+import xml.etree.ElementTree as ET
+import re
 import time
 from datetime import datetime
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import accuracy_score
-import warnings
-warnings.filterwarnings("ignore")
 
-TELEGRAM_BOT_TOKEN = "YOUR_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
+warnings.filterwarnings('ignore')
 
-# ==============================================================================
-# DATA
-# ==============================================================================
-def fetch_data():
-    df = yf.download("BTC-USD", period="180d", interval="1h", progress=False)
+# Auto-install dependencies jika belum ada di server (berguna untuk GitHub Actions)
+try:
+    import yfinance as yf
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.metrics import accuracy_score
+except ImportError:
+    os.system('pip install yfinance scikit-learn')
+    import yfinance as yf
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.metrics import accuracy_score
 
-    if df.index.tzinfo is None:
-        df.index = df.index.tz_localize("UTC")
-    df.index = df.index.tz_convert("Asia/Makassar")
+# ================= KONFIGURASI TELEGRAM & SERVER =================
+TELEGRAM_BOT_TOKEN = '8281574109:AAHMCWUiDCGID6zropl3TT0mW5yUtUZK1Gs'
+TELEGRAM_CHAT_ID = '8067218202'
+EXPECTED_CRON_MINUTE = 50 
+# ==================================================================
 
-    idr = yf.download("IDR=X", period="5d", progress=False)
-    kurs = float(idr["Close"].iloc[-1])
+def format_rupiah(angka):
+    if pd.isna(angka): return "Rp 0"
+    return f"Rp {angka:,.0f}".replace(',', '.')
 
-    for col in ["Open","High","Low","Close"]:
-        df[col] *= kurs
+# ------------------------------------------------------------------------------
+# 1. MODUL SENTIMEN BERITA (PRO MAX)
+# ------------------------------------------------------------------------------
+def fetch_crypto_news_sentiment():
+    print("[*] Mengumpulkan dan menganalisis berita Kripto global...")
+    rss_urls = [
+        'https://www.coindesk.com/arc/outboundfeeds/rss/',
+        'https://cointelegraph.com/rss',
+        'https://cryptopotato.com/feed/'
+    ]
+    bullish_keywords = ['surge', 'jump', 'rise', 'bull', 'high', 'adopt', 'approve', 'gain', 'positive', 'buy', 'up', 'soar', 'breakout', 'record']
+    bearish_keywords = ['drop', 'fall', 'crash', 'bear', 'low', 'ban', 'reject', 'lose', 'negative', 'sell', 'down', 'hack', 'scam', 'plunge']
+    
+    bullish_score, bearish_score = 0, 0
+    unique_news = set()
+    
+    for url in rss_urls:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            response = urllib.request.urlopen(req, timeout=5)
+            root = ET.fromstring(response.read())
+            
+            for item in root.findall('.//item')[:10]:
+                title = item.find('title').text
+                if not title: continue
+                clean_title = re.sub(r'[^\w\s]', '', title.lower())
+                
+                if clean_title not in unique_news:
+                    unique_news.add(clean_title)
+                    for word in bullish_keywords:
+                        if word in clean_title: bullish_score += 1
+                    for word in bearish_keywords:
+                        if word in clean_title: bearish_score += 1
+        except Exception:
+            continue
 
-    return df
+    selisih = bullish_score - bearish_score
+    if selisih >= 3: return f"SANGAT POSITIF 🚀 ({len(unique_news)} Berita)"
+    elif selisih > 0: return f"POSITIF RINGAN 🟢 ({len(unique_news)} Berita)"
+    elif selisih <= -3: return f"SANGAT NEGATIF 🚨 ({len(unique_news)} Berita)"
+    elif selisih < 0: return f"NEGATIF RINGAN 🔴 ({len(unique_news)} Berita)"
+    return f"NETRAL/SEIMBANG ⚪ ({len(unique_news)} Berita)"
 
-# ==============================================================================
-# FEATURE ENGINEERING MAX
-# ==============================================================================
-def create_features(df):
+# ------------------------------------------------------------------------------
+# 2. MODUL DATA & FEATURE ENGINEERING (GABUNGAN)
+# ------------------------------------------------------------------------------
+def fetch_and_engineer_features(period='180d', interval='1h'):
+    print("[*] Mengunduh data pasar dan memproses Feature Engineering...")
+    df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
 
+    if df.index.tzinfo is None: df.index = df.index.tz_localize('UTC')
+    df.index = df.index.tz_convert('Asia/Makassar') # WITA
+
+    try:
+        idr_data = yf.download('IDR=X', period='5d', progress=False)
+        if isinstance(idr_data.columns, pd.MultiIndex): idr_data.columns = idr_data.columns.droplevel(1)
+        kurs_idr = float(idr_data['Close'].iloc[-1])
+    except:
+        kurs_idr = 16000.0
+
+    for col in ['Open', 'High', 'Low', 'Close']:
+        if col in df.columns: df[col] = df[col] * kurs_idr
+
+    # --- INDIKATOR UNTUK CHART (PRO MAX) ---
+    df['MA_50'] = df['Close'].rolling(window=50).mean()
+    df['MA_200'] = df['Close'].rolling(window=200).mean()
+    df['BB_Middle'] = df['Close'].rolling(window=20).mean()
+    std_20 = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['BB_Middle'] + (std_20 * 2.0)
+    df['BB_Lower'] = df['BB_Middle'] - (std_20 * 2.0)
+    
+    # RSI & StochRSI
+    delta = df['Close'].diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    rs = up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean()
+    df['RSI'] = 100 - (100 / (1 + rs))
+    df['StochRSI'] = (df['RSI'] - df['RSI'].rolling(14).min()) / (df['RSI'].rolling(14).max() - df['RSI'].rolling(14).min())
+
+    # ATR & ADX
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    df['ATR'] = np.max(pd.concat([high_low, high_close, low_close], axis=1), axis=1).rolling(14).mean()
+    
+    df['+DM'] = np.where((df['High'] - df['High'].shift(1)) > (df['Low'].shift(1) - df['Low']), np.maximum(df['High'] - df['High'].shift(1), 0), 0)
+    df['-DM'] = np.where((df['Low'].shift(1) - df['Low']) > (df['High'] - df['High'].shift(1)), np.maximum(df['Low'].shift(1) - df['Low'], 0), 0)
+    df['+DI'] = 100 * (df['+DM'].ewm(alpha=1/14, adjust=False).mean() / df['ATR'])
+    df['-DI'] = 100 * (df['-DM'].ewm(alpha=1/14, adjust=False).mean() / df['ATR'])
+    df['ADX'] = (100 * np.abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])).ewm(alpha=1/14, adjust=False).mean()
+
+    # VWAP
+    if 'Volume' in df.columns:
+        df['VP'] = ((df['High'] + df['Low'] + df['Close']) / 3) * df['Volume']
+        df['VWAP_24'] = df['VP'].rolling(window=24).sum() / df['Volume'].rolling(window=24).sum()
+    else:
+        df['VWAP_24'] = df['Close']
+
+    # --- FITUR UNTUK MACHINE LEARNING (GODMODE) ---
     df["EMA20"] = df["Close"].ewm(span=20).mean()
     df["EMA50"] = df["Close"].ewm(span=50).mean()
     df["EMA_Spread"] = (df["EMA20"] - df["EMA50"]) / df["Close"]
-
-    df["RSI"] = 100 - (100/(1 + (df["Close"].diff().clip(lower=0).rolling(14).mean() /
-                                 (-df["Close"].diff().clip(upper=0).rolling(14).mean()))))
-
-    ema12 = df["Close"].ewm(span=12).mean()
-    ema26 = df["Close"].ewm(span=26).mean()
+    
+    ema12, ema26 = df["Close"].ewm(span=12).mean(), df["Close"].ewm(span=26).mean()
     macd = ema12 - ema26
     df["MACD_Hist"] = macd - macd.ewm(span=9).mean()
-
+    
     df["Return_1H"] = df["Close"].pct_change()
     df["Return_3H"] = df["Close"].pct_change(3)
     df["Return_6H"] = df["Close"].pct_change(6)
-
+    
     df["Volatility"] = (df["High"] - df["Low"]).rolling(14).mean() / df["Close"]
-    df["Volume_Ratio"] = df["Volume"] / df["Volume"].rolling(24).mean()
-
-    df["Trend_Slope"] = df["Close"].rolling(12).apply(
-        lambda x: np.polyfit(range(len(x)), x, 1)[0]
-    )
-
+    df["Volume_Ratio"] = df["Volume"] / df["Volume"].rolling(24).mean() if 'Volume' in df.columns else 1
+    
+    # Hindari error polyfit dengan apply yang aman
+    def calc_slope(x):
+        try: return np.polyfit(range(len(x)), x, 1)[0]
+        except: return 0
+    df["Trend_Slope"] = df["Close"].rolling(12).apply(calc_slope, raw=True)
     df["Momentum_Accel"] = df["Return_1H"].diff()
-
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
-
+    
+    # Target ML: 1 jika candle berikutnya naik, 0 jika turun
     df["Target"] = np.where(df["Close"].shift(-1) > df["Close"], 1, 0)
+    
+    # Hapus NaN untuk ML, TAPI jangan buang baris terakhir (karena itu untuk diprediksi)
+    features_cols = ["EMA_Spread","RSI","MACD_Hist","Return_1H","Return_3H","Return_6H",
+                     "Volatility","Volume_Ratio","Trend_Slope","Momentum_Accel","Regime"]
+    
+    return df, features_cols
 
-    df = df.dropna()
-
-    features = [
-        "EMA_Spread","RSI","MACD_Hist",
-        "Return_1H","Return_3H","Return_6H",
-        "Volatility","Volume_Ratio",
-        "Trend_Slope","Momentum_Accel","Regime"
-    ]
-
-    return df, features
-
-# ==============================================================================
-# ENSEMBLE + CALIBRATION
-# ==============================================================================
-def train_models(df, features):
-
-    X = df[features]
-    y = df["Target"]
-
+# ------------------------------------------------------------------------------
+# 3. MODUL ENSEMBLE MACHINE LEARNING & CALIBRATION (GODMODE)
+# ------------------------------------------------------------------------------
+def train_and_predict(df, features):
+    print("[*] Melatih AI Ensemble (RandomForest, GradientBoosting, LogisticReg)...")
+    
+    # Pisahkan data training (semua kecuali baris terakhir) dan data terkini (baris terakhir)
+    train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
+    X_train = train_df[features]
+    y_train = train_df["Target"]
+    
+    latest_features = df[features].iloc[-1:]
+    
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X_train)
+    X_latest_scaled = scaler.transform(latest_features)
 
-    tscv = TimeSeriesSplit(n_splits=5)
-
+    # Inisialisasi Model
     lr = LogisticRegression()
-    rf = RandomForestClassifier(n_estimators=400)
-    gb = GradientBoostingClassifier()
+    rf = RandomForestClassifier(n_estimators=200, random_state=42)
+    gb = GradientBoostingClassifier(random_state=42)
 
-    for train_idx, test_idx in tscv.split(X_scaled):
-        X_train, y_train = X_scaled[train_idx], y.iloc[train_idx]
-        lr.fit(X_train, y_train)
-        rf.fit(X_train, y_train)
-        gb.fit(X_train, y_train)
+    # Train dengan TimeSeriesSplit untuk akurasi yang jujur (tanpa look-ahead bias)
+    tscv = TimeSeriesSplit(n_splits=3)
+    
+    # Kalibrasi Logistic Regression agar probabilitasnya akurat
+    lr_calibrated = CalibratedClassifierCV(lr, method="sigmoid", cv=tscv)
+    
+    # Fit semua model
+    lr_calibrated.fit(X_scaled, y_train)
+    rf.fit(X_scaled, y_train)
+    gb.fit(X_scaled, y_train)
 
-    lr = CalibratedClassifierCV(lr, method="sigmoid", cv=3)
-    lr.fit(X_scaled, y)
+    # Hitung Akurasi Training
+    prob_lr_train = lr_calibrated.predict_proba(X_scaled)[:,1]
+    prob_rf_train = rf.predict_proba(X_scaled)[:,1]
+    prob_gb_train = gb.predict_proba(X_scaled)[:,1]
+    ensemble_train_prob = (prob_lr_train + prob_rf_train + prob_gb_train) / 3
+    accuracy = accuracy_score(y_train, (ensemble_train_prob > 0.5).astype(int)) * 100
 
-    prob_lr = lr.predict_proba(X_scaled)[:,1]
-    prob_rf = rf.predict_proba(X_scaled)[:,1]
-    prob_gb = gb.predict_proba(X_scaled)[:,1]
+    # Prediksi Data Terkini
+    prob_lr = lr_calibrated.predict_proba(X_latest_scaled)[0,1]
+    prob_rf = rf.predict_proba(X_latest_scaled)[0,1]
+    prob_gb = gb.predict_proba(X_latest_scaled)[0,1]
+    latest_prob = (prob_lr + prob_rf + prob_gb) / 3
+    
+    # Untuk evaluasi evaluasi_sebelumnya
+    past_prob = ensemble_train_prob[-1] if len(ensemble_train_prob) > 0 else 0.5
 
-    ensemble_prob = (prob_lr + prob_rf + prob_gb) / 3
+    return latest_prob, accuracy, past_prob
 
-    accuracy = accuracy_score(y, (ensemble_prob>0.5).astype(int)) * 100
-
-    return scaler, ensemble_prob, accuracy
-
-# ==============================================================================
-# MONTE CARLO + VAR
-# ==============================================================================
-def monte_carlo(price, vol, steps=24, sims=2000):
-
+# ------------------------------------------------------------------------------
+# 4. MODUL MONTE CARLO & MANAJEMEN RISIKO (GODMODE)
+# ------------------------------------------------------------------------------
+def monte_carlo_simulation(price, vol, steps=24, sims=2000):
+    print(f"[*] Menjalankan {sims} Simulasi Monte Carlo untuk {steps} jam ke depan...")
     paths = []
     for _ in range(sims):
         prices = [price]
         for _ in range(steps):
             shock = np.random.normal(0, vol)
-            prices.append(prices[-1]*(1+shock))
+            prices.append(prices[-1] * (1 + shock))
         paths.append(prices)
 
     paths = np.array(paths)
-    final_prices = paths[:,-1]
-
+    final_prices = paths[:, -1]
+    
     expected = np.mean(final_prices)
-    var95 = np.percentile(final_prices,5)
+    var95 = np.percentile(final_prices, 5) # Harga terburuk dengan probabilitas 5%
+    return expected, var95, np.mean(paths[:, 1]) # kembalikan juga ekspektasi 1 jam untuk chart
 
-    return expected, var95
-
-# ==============================================================================
-# BACKTEST ADVANCED
-# ==============================================================================
-def backtest(df, probs):
-
-    capital = 100
-    equity = [capital]
-    wins = 0
-    trades = 0
-    gross_profit = 0
-    gross_loss = 0
-
-    for i in range(len(probs)-1):
-        if probs[i] > 0.55:
-            ret = df["Return_1H"].iloc[i+1]
-            capital *= (1+ret)
-            trades+=1
-            if ret>0:
-                wins+=1
-                gross_profit+=ret
-            else:
-                gross_loss+=abs(ret)
-        equity.append(capital)
-
-    equity = np.array(equity)
-    returns = pd.Series(equity).pct_change().dropna()
-
-    sharpe = (returns.mean()/returns.std())*np.sqrt(24*365) if returns.std()!=0 else 0
-    downside = returns[returns<0]
-    sortino = (returns.mean()/downside.std())*np.sqrt(24*365) if downside.std()!=0 else 0
-
-    peak = np.maximum.accumulate(equity)
-    drawdown = (equity-peak)/peak
-    max_dd = drawdown.min()*100
-
-    cagr = ((equity[-1]/100)**(365/180)-1)*100
-    winrate = (wins/trades)*100 if trades>0 else 0
-    profit_factor = gross_profit/gross_loss if gross_loss!=0 else 0
-
-    return equity[-1], sharpe, sortino, max_dd, cagr, winrate, profit_factor
-
-# ==============================================================================
-# RISK ENGINE
-# ==============================================================================
-def position_sizing(prob, volatility):
-
-    edge = prob - (1-prob)
-    kelly = max(edge,0)
-
-    vol_adjust = min(1/(volatility*100),1)
-
+def position_sizing_kelly(prob, volatility):
+    # Kelly Criterion = Edge / Odds
+    edge = prob - (1 - prob)
+    kelly = max(edge, 0)
+    # Sesuaikan dengan volatilitas pasar
+    vol_adjust = min(1 / (volatility * 100), 1)
     size = kelly * vol_adjust
-    size = min(size,0.25)  # max 25% exposure
+    size = min(size, 0.25) # Maksimal 25% dari total modal
+    return round(size * 100, 2)
 
-    return round(size*100,2)
+# ------------------------------------------------------------------------------
+# 5. MODUL VISUALISASI CHART PROFESIONAL (PRO MAX)
+# ------------------------------------------------------------------------------
+def plot_professional_analysis(df, next_price_1h, filename="chart.png"):
+    plot_data = df.tail(80) 
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig = plt.figure(figsize=(14, 12))
+    gs = fig.add_gridspec(3, 1, height_ratios=[3, 1, 1], hspace=0.3)
+    
+    ax1, ax2, ax3 = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[2, 0])
 
-# ==============================================================================
-# TELEGRAM
-# ==============================================================================
-def send_to_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode":"Markdown"}
-    requests.post(url, data=payload)
+    ax1.plot(plot_data.index, plot_data['Close'], label='Harga BTC', color='black', linewidth=1.5)
+    ax1.plot(plot_data.index, plot_data['VWAP_24'], label='VWAP (Garis Imbang)', color='#ff7f0e', linestyle='-.', linewidth=2)
+    ax1.plot(plot_data.index, plot_data['MA_50'], label='Trend Menengah (MA50)', color='blue', alpha=0.6)
+    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15, label='Zona Bollinger')
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
+    # Prediksi AI 1 Jam
+    last_time = plot_data.index[-1]
+    next_time = last_time + pd.Timedelta(hours=1)
+    
+    ax1.scatter(next_time, next_price_1h, color='red', s=250, marker='*', zorder=10, label=f'Proyeksi AI 1 Jam: {format_rupiah(next_price_1h)}')
+    ax1.plot([last_time, next_time], [plot_data['Close'].iloc[-1], next_price_1h], color='red', linestyle=':', linewidth=2)
+
+    ax1.set_title('GODMODE AI QUANT CHART (1 JAM) - WITA', fontsize=16, fontweight='bold', pad=15)
+    ax1.set_ylabel('Harga (IDR)')
+    ax1.legend(loc='upper left', framealpha=0.9)
+    ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
+    
+    myFmt = mdates.DateFormatter('%d %b\n%H:%M')
+    
+    # RSI & Stoch
+    ax2.plot(plot_data.index, plot_data['RSI'], color='purple', label='RSI (Momentum Harga)')
+    ax2.plot(plot_data.index, plot_data['StochRSI']*100, color='cyan', alpha=0.5, label='StochRSI (Sensitif)')
+    ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
+    ax2.axhline(30, color='green', linestyle='--', alpha=0.5)
+    ax2.fill_between(plot_data.index, plot_data['RSI'], 70, where=(plot_data['RSI'] >= 70), facecolor='red', alpha=0.3)
+    ax2.fill_between(plot_data.index, plot_data['RSI'], 30, where=(plot_data['RSI'] <= 30), facecolor='green', alpha=0.3)
+    ax2.set_ylabel('Momentum')
+    ax2.set_ylim(0, 100)
+    ax2.legend(loc='upper left')
+
+    # ADX
+    ax3.plot(plot_data.index, plot_data['ADX'], color='brown', linewidth=2, label='ADX (Kekuatan Tren)')
+    ax3.axhline(25, color='black', linestyle='--', alpha=0.8, label='Batas Tren Kuat (>25)')
+    ax3.fill_between(plot_data.index, plot_data['ADX'], 25, where=(plot_data['ADX'] >= 25), facecolor='gold', alpha=0.4)
+    ax3.set_ylabel('Kekuatan Tren')
+    ax3.set_ylim(0, 60)
+    ax3.legend(loc='upper left')
+
+    for ax in [ax1, ax2, ax3]:
+        ax.xaxis.set_major_formatter(myFmt)
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+
+# ------------------------------------------------------------------------------
+# 6. MODUL TELEGRAM PENGIRIMAN
+# ------------------------------------------------------------------------------
+def send_to_telegram(message, image_path):
+    print("[*] Mengirim laporan Godmode Pro Max ke Telegram...")
+    url_message = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload_msg = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
+    requests.post(url_message, data=payload_msg)
+
+    url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    with open(image_path, 'rb') as photo:
+        payload_photo = {'chat_id': TELEGRAM_CHAT_ID}
+        requests.post(url_photo, data=payload_photo, files={'photo': photo})
+    print("[*] Selesai!")
+
+# ------------------------------------------------------------------------------
+# MAIN EXECUTION
+# ------------------------------------------------------------------------------
 def main():
+    start_time = time.time()
+    print("==========================================================")
+    print("      QUANT GODMODE PRO MAX ENGINE - BITCOIN INDODAX      ")
+    print("==========================================================")
+    
+    # 1. Fetch & Proses Data
+    df, features = fetch_and_engineer_features()
+    news_status = fetch_crypto_news_sentiment()
+    latest_close = df['Close'].iloc[-1]
+    volatility = df["Volatility"].iloc[-1]
+    
+    # 2. AI Machine Learning
+    latest_prob, ml_accuracy, past_prob = train_and_predict(df, features)
+    
+    # 3. Quant / Risk Management
+    expected_24h, var95, expected_1h = monte_carlo_simulation(latest_close, volatility)
+    exposure = position_sizing_kelly(latest_prob, volatility)
+    
+    # 4. Evaluasi Performa
+    waktu_eksekusi = time.time() - start_time
+    sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
+    menit_sekarang = sekarang_wita.minute
+    delay_menit = menit_sekarang - EXPECTED_CRON_MINUTE if menit_sekarang >= EXPECTED_CRON_MINUTE else (menit_sekarang + 60) - EXPECTED_CRON_MINUTE
+    info_server = "⚡ Tepat Waktu (Lancar)" if delay_menit <= 5 else f"🐢 Terkena Delay Antrean GitHub ({delay_menit} menit)"
+    
+    # Evaluasi Prediksi Jam Lalu
+    prev_close = df['Close'].iloc[-2]
+    if past_prob > 0.5 and latest_close > prev_close: eval_msg = "BENAR ✅ (Harga Naik)"
+    elif past_prob < 0.5 and latest_close < prev_close: eval_msg = "BENAR ✅ (Berhasil Hindari Minus)"
+    else: eval_msg = "SALAH ❌ (Pasar bergerak tak terduga)"
 
-    start = time.time()
+    # Logika Arah & Rekomendasi
+    confidence = max(latest_prob, 1 - latest_prob) * 100
+    if latest_prob >= 0.60:
+        arah = "NAIK KUAT 🚀"
+        rekomendasi = "🌟 MOMENTUM EMAS UNTUK BELI (STRONG BUY)"
+    elif latest_prob > 0.50:
+        arah = "Cenderung NAIK 📈"
+        rekomendasi = "📈 POTENSI NAIK, BOLEH BELI BACA TREN (BUY)"
+    elif latest_prob <= 0.40:
+        arah = "TURUN KUAT 🚨"
+        rekomendasi = "🚨 BAHAYA! PASAR ANJLOK (STRONG SELL)"
+    else:
+        arah = "Cenderung TURUN 📉"
+        rekomendasi = "📉 POTENSI TURUN, WASPADA (SELL)"
 
-    df = fetch_data()
-    df, features = create_features(df)
+    # 5. Susun Pesan Telegram
+    pesan = f"💎 *LAPORAN ALGORITMA GODMODE PRO MAX* 💎\n"
+    pesan += f"_{df.index[-1].strftime('%d %B %Y | %H:%M WITA')}_\n\n"
+    
+    pesan += f"⚙️ *System Health:*\n"
+    pesan += f"├ GitHub: {info_server}\n"
+    pesan += f"└ Engine: {waktu_eksekusi:.1f} detik\n\n"
+    
+    pesan += f"💰 *Harga Saat Ini:* {format_rupiah(latest_close)}\n\n"
+    
+    pesan += f"📰 *RADAR BERITA GLOBAL:*\n"
+    pesan += f"└ Sentimen Media: {news_status}\n\n"
+    
+    pesan += f"🤖 *KECERDASAN BUATAN (ENSEMBLE ML):*\n"
+    pesan += f"├ Sinyal Arah: *{arah}*\n"
+    pesan += f"├ Probabilitas AI: *{confidence:.1f}%*\n"
+    pesan += f"├ Akurasi Training AI: {ml_accuracy:.1f}%\n"
+    pesan += f"└ Evaluasi Jam Lalu: {eval_msg}\n\n"
+    
+    pesan += f"🔮 *PROYEKSI HARGA 24 JAM (MONTE CARLO):*\n"
+    pesan += f"├ Target Rata-rata: {format_rupiah(expected_24h)}\n"
+    pesan += f"└ Risiko Jatuh (VaR 95%): {format_rupiah(var95)}\n\n"
+    
+    pesan += f"📊 *RISK MANAGEMENT & INDIKATOR:*\n"
+    pesan += f"├ Alokasi Modal Aman: *{exposure}%* (Kelly)\n"
+    pesan += f"├ Posisi Bandar (VWAP): {'Aman 🟢' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada 🔴'}\n"
+    pesan += f"└ Kekuatan Tren (ADX): {'Kuat 💪' if df['ADX'].iloc[-1] > 25 else 'Lemah 🥱'}\n\n"
+    
+    pesan += f"📌 *KESIMPULAN & SARAN AKHIR:*\n"
+    pesan += f"*{rekomendasi}*\n\n"
+    
+    if latest_prob > 0.5:
+        sl = latest_close - (df['ATR'].iloc[-1] * 1.5)
+        tp = latest_close + (df['ATR'].iloc[-1] * 2.5)
+        pesan += f"💡 _Saran: Pasang Stop Loss di {format_rupiah(sl)} dan Take Profit di {format_rupiah(tp)}._\n"
+        
+    pesan += "\n_ℹ️ Disclaimer: Bot digerakkan oleh AI Probabilistik, bukan jaminan pasti 100%._"
 
-    scaler, probs, accuracy = train_models(df, features)
-
-    latest_prob = probs[-1]
-    direction = "NAIK 📈" if latest_prob>0.5 else "TURUN 📉"
-    confidence = max(latest_prob,1-latest_prob)*100
-
-    expected, var95 = monte_carlo(
-        df["Close"].iloc[-1],
-        df["Volatility"].iloc[-1]
-    )
-
-    final_capital, sharpe, sortino, max_dd, cagr, winrate, pf = backtest(df, probs)
-
-    exposure = position_sizing(latest_prob, df["Volatility"].iloc[-1])
-
-    runtime = round(time.time()-start,2)
-
-    message = f"""
-🏦 *BTC QUANT GODMODE ENGINE v6*
-
-🕒 {df.index[-1].strftime('%d %B %Y | %H:%M WITA')}
-
-💰 Harga Sekarang : Rp {df['Close'].iloc[-1]:,.0f}
-
-🤖 Ensemble Probability : {latest_prob*100:.2f}%
-🎯 Direction            : *{direction}*
-🔥 AI Confidence        : *{confidence:.2f}%*
-
-🔮 Monte Carlo 24H Mean : Rp {expected:,.0f}
-⚠️ VaR 95%              : Rp {var95:,.0f}
-
-📊 Strategy Metrics:
-• Accuracy  : {accuracy:.2f}%
-• Winrate   : {winrate:.2f}%
-• CAGR      : {cagr:.2f}%
-• Sharpe    : {sharpe:.2f}
-• Sortino   : {sortino:.2f}
-• Max DD    : {max_dd:.2f}%
-• ProfitFactor : {pf:.2f}
-
-💰 Suggested Exposure : {exposure}% modal
-
-⏱ Runtime : {runtime} detik
-
-_System: Ensemble ML + Calibration + Monte Carlo + VaR + Kelly + Risk Analytics_
-"""
-
-    send_to_telegram(message)
+    # 6. Eksekusi Chart & Kirim
+    chart_filename = "godmode_chart.png"
+    plot_professional_analysis(df, expected_1h, chart_filename)
+    send_to_telegram(pesan, chart_filename)
 
 if __name__ == "__main__":
     main()
