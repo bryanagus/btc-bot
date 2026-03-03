@@ -4,7 +4,7 @@ on:
   schedule:
     # Mengakali delay GitHub: 
     # Jadwalkan di menit ke-50 setiap jam
-    - cron: '50 * * * *' 
+    - cron: '9 * * * *' 
   workflow_dispatch:
 
 jobs:
