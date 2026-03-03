@@ -1,10 +1,10 @@
-name: Bot Trading BTC WITA
+name: Bot Trading BTC Pro WITA
 
 on:
   schedule:
-    # Berjalan di menit ke-10 setiap jam (waktu server).
-    # Contoh: 15:10 WITA, 16:10 WITA, 17:10 WITA, dst.
-    - cron: '10 * * * *' 
+    # Mengakali delay GitHub: 
+    # Jadwalkan di menit ke-50 setiap jam
+    - cron: '50 * * * *' 
   workflow_dispatch:
 
 jobs:
