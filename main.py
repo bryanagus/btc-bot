@@ -20,31 +20,24 @@ import re
 import time
 from datetime import datetime
 
+# Import Library ML dan Finance
+import yfinance as yf
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import accuracy_score
+
 warnings.filterwarnings('ignore')
 
-# Auto-install dependencies jika belum ada di server (berguna untuk GitHub Actions)
-try:
-    import yfinance as yf
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.calibration import CalibratedClassifierCV
-    from sklearn.model_selection import TimeSeriesSplit
-    from sklearn.metrics import accuracy_score
-except ImportError:
-    os.system('pip install yfinance scikit-learn')
-    import yfinance as yf
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.calibration import CalibratedClassifierCV
-    from sklearn.model_selection import TimeSeriesSplit
-    from sklearn.metrics import accuracy_score
-
 # ================= KONFIGURASI TELEGRAM & SERVER =================
-TELEGRAM_BOT_TOKEN = '8281574109:AAHMCWUiDCGID6zropl3TT0mW5yUtUZK1Gs'
-TELEGRAM_CHAT_ID = '8067218202'
-EXPECTED_CRON_MINUTE = 50 
+# Mengambil dari GitHub Secrets agar aman dan tidak terekspos public
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    print("⚠️ PERINGATAN: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID belum di-set di Environment!")
 # ==================================================================
 
 def format_rupiah(angka):
@@ -326,6 +319,10 @@ def plot_professional_analysis(df, next_price_1h, filename="chart.png"):
 # ------------------------------------------------------------------------------
 def send_to_telegram(message, image_path):
     print("[*] Mengirim laporan Godmode Pro Max ke Telegram...")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[!] Pengiriman dibatalkan. Token Telegram tidak disetel.")
+        return
+        
     url_message = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload_msg = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
     requests.post(url_message, data=payload_msg)
@@ -358,12 +355,22 @@ def main():
     expected_24h, var95, expected_1h = monte_carlo_simulation(latest_close, volatility)
     exposure = position_sizing_kelly(latest_prob, volatility)
     
-    # 4. Evaluasi Performa
+    # 4. Evaluasi Performa & Perhitungan Delay Real-time
     waktu_eksekusi = time.time() - start_time
+    
+    # Menghitung seberapa usang/fresh data berdasarkan waktu saat ini vs waktu candle terakhir
+    waktu_data_terakhir = df.index[-1]
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
-    menit_sekarang = sekarang_wita.minute
-    delay_menit = menit_sekarang - EXPECTED_CRON_MINUTE if menit_sekarang >= EXPECTED_CRON_MINUTE else (menit_sekarang + 60) - EXPECTED_CRON_MINUTE
-    info_server = "⚡ Tepat Waktu (Lancar)" if delay_menit <= 5 else f"🐢 Terkena Delay Antrean GitHub ({delay_menit} menit)"
+    selisih_detik = (sekarang_wita - waktu_data_terakhir).total_seconds()
+    selisih_menit = int(abs(selisih_detik) / 60)
+    
+    # Menentukan status server
+    if selisih_menit <= 20:
+        info_server = f"⚡ Sangat Cepat (Data {selisih_menit}m lalu)"
+    elif selisih_menit <= 60:
+        info_server = f"✅ Normal (Data {selisih_menit}m lalu)"
+    else:
+        info_server = f"🐢 Delay Eksekusi (Data {selisih_menit}m lalu)"
     
     # Evaluasi Prediksi Jam Lalu
     prev_close = df['Close'].iloc[-2]
@@ -388,11 +395,12 @@ def main():
 
     # 5. Susun Pesan Telegram
     pesan = f"💎 *LAPORAN ALGORITMA GODMODE PRO MAX* 💎\n"
-    pesan += f"_{df.index[-1].strftime('%d %B %Y | %H:%M WITA')}_\n\n"
+    # Menampilkan jam dari candle data yang ditangkap, bukan asal jam server
+    pesan += f"_{waktu_data_terakhir.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
     pesan += f"⚙️ *System Health:*\n"
-    pesan += f"├ GitHub: {info_server}\n"
-    pesan += f"└ Engine: {waktu_eksekusi:.1f} detik\n\n"
+    pesan += f"├ Eksekusi GitHub: {info_server}\n"
+    pesan += f"└ Engine AI: {waktu_eksekusi:.1f} detik\n\n"
     
     pesan += f"💰 *Harga Saat Ini:* {format_rupiah(latest_close)}\n\n"
     
