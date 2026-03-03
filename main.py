@@ -268,14 +268,31 @@ def evaluate_previous_prediction(df):
     price_diff = current_price - prev_price
     persentase = (price_diff / prev_price) * 100
     
+    # 1. Jika jam lalu sinyalnya BELI (BUY)
     if 'BELI' in prev_signal:
-        if current_price > prev_price: return f"BENAR ✅ (Cuan {persentase:.2f}%)"
-        else: return f"SALAH ❌ (Meleset {persentase:.2f}%)"
+        if current_price > prev_price: 
+            return f"BENAR ✅ (Cuan {persentase:.2f}%)"
+        else: 
+            return f"SALAH ❌ (Meleset {persentase:.2f}%)"
+            
+    # 2. Jika jam lalu sinyalnya JUAL (SELL)
     elif 'TURUN' in prev_signal or 'ANJLOK' in prev_signal:
-        if current_price < prev_price: return f"BENAR ✅ (Berhasil Hindari Minus {persentase:.2f}%)"
-        else: return f"SALAH ❌ (Malah Naik {persentase:.2f}%)"
+        if current_price < prev_price: 
+            return f"BENAR ✅ (Berhasil Hindari Minus {persentase:.2f}%)"
+        else: 
+            return f"SALAH ❌ (Malah Naik {persentase:.2f}%)"
+            
+    # 3. Jika jam lalu sinyalnya HOLD (Netral)
     else:
-        return f"AKURAT ⚪ (Pasar Diam/Sideways)"
+        # Jika harga bergerak sangat kecil (di bawah 0.3%), berarti keputusan HOLD memang tepat
+        if abs(persentase) <= 0.3: 
+            return f"TEPAT ⚪ (Pasar memang sepi: {persentase:.2f}%)"
+        # Jika harga naik lumayan tinggi, berarti bot kehilangan momen (Terlewat)
+        elif persentase > 0.3:
+            return f"TERLEWAT ⚠️ (Sinyal HOLD, tapi harga Naik {persentase:.2f}%)"
+        # Jika harga turun tajam, bot gagal memprediksi kejatuhan
+        else:
+            return f"TERLEWAT ⚠️ (Sinyal HOLD, tapi harga Turun {persentase:.2f}%)"
 
 def plot_professional_analysis(df, filename="chart.png"):
     plot_data = df.tail(80) 
