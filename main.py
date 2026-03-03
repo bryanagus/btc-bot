@@ -395,11 +395,13 @@ def main():
 
     # 5. Susun Pesan Telegram
     pesan = f"💎 *LAPORAN ALGORITMA GODMODE PRO MAX* 💎\n"
-    # Menampilkan jam dari candle data yang ditangkap, bukan asal jam server
-    pesan += f"_{waktu_data_terakhir.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
+    # PERUBAHAN: Menampilkan jam aktual saat bot tereksekusi (misal: 07:24 WITA)
+    pesan += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
     pesan += f"⚙️ *System Health:*\n"
     pesan += f"├ Eksekusi GitHub: {info_server}\n"
+    # PERUBAHAN: Tambahan info waktu candle agar kamu tahu data jam berapa yang dibaca AI
+    pesan += f"├ Waktu Candle: {waktu_data_terakhir.strftime('%H:%M WITA')}\n"
     pesan += f"└ Engine AI: {waktu_eksekusi:.1f} detik\n\n"
     
     pesan += f"💰 *Harga Saat Ini:* {format_rupiah(latest_close)}\n\n"
