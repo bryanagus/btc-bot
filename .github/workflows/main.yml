@@ -2,10 +2,10 @@ name: Bot Trading BTC WITA
 
 on:
   schedule:
-    # Berjalan setiap 1 jam (menggunakan waktu UTC). 
-    # Menit 0 setiap jam.
-    - cron: '0 * * * *' 
-  workflow_dispatch: # Supaya bisa di-klik manual untuk testing
+    # Berjalan di menit ke-10 setiap jam (waktu server).
+    # Contoh: 15:10 WITA, 16:10 WITA, 17:10 WITA, dst.
+    - cron: '10 * * * *' 
+  workflow_dispatch:
 
 jobs:
   build:
