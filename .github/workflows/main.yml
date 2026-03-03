@@ -2,10 +2,10 @@ name: Bot Trading BTC Pro WITA
 
 on:
   schedule:
-    # Mengakali delay GitHub: 
-    # Jadwalkan di menit ke-50 setiap jam
-    - cron: '9 * * * *' 
-  workflow_dispatch:
+    # Menggunakan menit ke-13 untuk menghindari antrean server GitHub (biasanya padat di menit 00, 15, 30, 45, 50)
+    # Ini akan sangat mengurangi masalah "Delay Antrean"
+    - cron: '13 * * * *' 
+  workflow_dispatch: # Memungkinkan kamu menjalankan bot secara manual dari tombol "Run workflow"
 
 jobs:
   build:
@@ -22,7 +22,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy matplotlib yfinance pytz requests
+          # Menginstal semua library sekaligus agar cepat, termasuk scikit-learn
+          pip install pandas numpy matplotlib yfinance pytz requests scikit-learn
 
       - name: Run Script
         run: python main.py
+        env:
+          # Mengambil token dari GitHub Secrets agar aman dan tidak terekspos di public code
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
