@@ -1,10 +1,10 @@
 name: Bot Trading BTC Pro WITA
 
 on:
-  schedule:
+  #schedule:
     # Menggunakan menit ke-13 untuk menghindari antrean server GitHub (biasanya padat di menit 00, 15, 30, 45, 50)
     # Ini akan sangat mengurangi masalah "Delay Antrean"
-    - cron: '13 * * * *' 
+    #- cron: '13 * * * *' 
   workflow_dispatch: # Memungkinkan kamu menjalankan bot secara manual dari tombol "Run workflow"
 
 jobs:
