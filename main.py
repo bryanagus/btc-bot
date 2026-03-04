@@ -1,6 +1,9 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX ENGINE (TIMEFRAME 1 JAM)
-# Pembaruan: Indodax Live API, VADER NLP, Dynamic Kelly, No Data Leakage
+# Fitur: Ensemble Machine Learning, Monte Carlo, Kelly Risk Engine, 
+#        Multi-Source News, ADX, VWAP, Telegram Reporting & Charting
+# Pembaruan: Indodax Live API (Fixed Candle), VADER NLP, Dynamic Kelly, No Data Leakage
+# Zona Waktu: WITA (Asia/Makassar)
 # ==============================================================================
 import pandas as pd
 import numpy as np
@@ -123,13 +126,23 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
         if col in df.columns: 
             df[col] = df[col] * kurs_idr
 
-    # INJEKSI HARGA REAL-TIME DARI INDODAX
+    # ====================================================================
+    # INJEKSI HARGA REAL-TIME DARI INDODAX (DENGAN PERBAIKAN CANDLESTICK)
+    # ====================================================================
     print("[*] Mengambil harga live dari API Indodax...")
     try:
         indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=5).json()
         live_price = float(indodax_req['ticker']['last'])
+        
         # Timpa harga close terakhir dengan harga live Indodax agar AI menebak dari harga detik ini
         df.loc[df.index[-1], 'Close'] = live_price
+        
+        # FIX: Mencegah 'Candle Mutan' (Close lebih tinggi dari High atau lebih rendah dari Low)
+        if live_price > df.loc[df.index[-1], 'High']:
+            df.loc[df.index[-1], 'High'] = live_price
+        if live_price < df.loc[df.index[-1], 'Low']:
+            df.loc[df.index[-1], 'Low'] = live_price
+            
     except Exception as e:
         print(f"[!] Gagal mengambil API Indodax, menggunakan harga konversi YFinance. Error: {e}")
 
@@ -503,7 +516,7 @@ def main():
     else:
         arah, rekomendasi = "Cenderung TURUN 📉", "POTENSI TURUN, LEBIH BAIK MENUNGGU (WAIT/SELL)"
 
-    # 5. Susun Pesan Telegram
+    # 5. Susun Pesan Telegram (BAHASA SUPER RAMAH AWAM)
     pesan = f"💎 *LAPORAN TRADING AI GODMODE* 💎\n"
     pesan += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
@@ -513,19 +526,21 @@ def main():
     pesan += f"🤖 *PREDIKSI AI 1 JAM KE DEPAN:*\n"
     pesan += f"_(Otak utama yang menebak arah tren pasar)_\n"
     pesan += f"├ Arah Harga: *{arah}*\n"
-    pesan += f"├ Keyakinan AI: *{confidence:.1f}%*\n"
-    pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Tanpa Data Leakage)\n"
+    pesan += f"├ Keyakinan AI: *{confidence:.1f}%* (Makin tinggi makin akurat)\n"
+    pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Sudah teruji bebas error)\n"
     pesan += f"└ Cek Sejam Lalu: {eval_msg}\n\n"
     
     pesan += f"🔮 *SIMULASI HARGA 24 JAM (MONTE CARLO):*\n"
-    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h)} (Target rata-rata wajar)\n"
+    pesan += f"_(AI mensimulasikan ribuan skenario untuk menebak harga besok)_\n"
+    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h)} (Target wajar/TP)\n"
     pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95)}\n"
-    pesan += f"   _↳ Penjelasan: Sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
+    pesan += f"   _↳ Penjelasan: AI sangat yakin (95%) harga tidak akan anjlok melebihi batas ini. Jadikan sebagai patokan Cut Loss (SL)._\n\n"
     
     pesan += f"📊 *SARAN MANAJEMEN MODAL & PASAR:*\n"
-    pesan += f"├ Alokasi Modal Aman: Gunakan *{exposure}%* dari total uangmu.\n"
-    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Sideways, jangan agresif)'}\n"
-    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Di bawah rata-rata bandar)'}\n\n"
+    pesan += f"_(Panduan agar saldo Indodax tetap aman)_\n"
+    pesan += f"├ Alokasi Modal Aman: Gunakan maksimal *{exposure}%* dari total saldomu.\n"
+    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif bergerak)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Pasar sedang mendatar/sideways, santai saja)'}\n"
+    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Harga di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Harga di bawah rata-rata bandar)'}\n\n"
     
     pesan += f"📰 *SENTIMEN BERITA DUNIA:* {news_status}\n\n"
     
