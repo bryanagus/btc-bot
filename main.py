@@ -1,9 +1,6 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX ENGINE (TIMEFRAME 1 JAM)
-# Fitur: Ensemble Machine Learning, Monte Carlo, Kelly Risk Engine, 
-#        Multi-Source News, ADX, VWAP, Telegram Reporting & Charting
-# Pembaruan: Dual Chart (Main & Zoom 6H), Mesin Waktu AI, Akurasi Jujur
-# Zona Waktu: WITA (Asia/Makassar)
+# Pembaruan: Indodax Live API, VADER NLP, Dynamic Kelly, No Data Leakage
 # ==============================================================================
 import pandas as pd
 import numpy as np
@@ -23,6 +20,7 @@ from datetime import datetime
 
 # Import Library ML dan Finance
 import yfinance as yf
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
@@ -38,7 +36,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    print("⚠️ PERINGATAN: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID belum di-set di Environment!")
+    print("⚠️ PERINGATAN: TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID belum di-set di Environment GitHub Secrets!")
 # ==================================================================
 
 def format_rupiah(angka):
@@ -47,20 +45,18 @@ def format_rupiah(angka):
     return f"Rp {angka:,.0f}".replace(',', '.')
 
 # ------------------------------------------------------------------------------
-# 1. MODUL SENTIMEN BERITA (PRO MAX)
+# 1. MODUL SENTIMEN BERITA DENGAN NLP (VADER)
 # ------------------------------------------------------------------------------
 def fetch_crypto_news_sentiment():
-    print("[*] Mengumpulkan dan menganalisis berita Kripto global...")
+    print("[*] Mengumpulkan dan menganalisis berita Kripto global dengan NLP...")
     rss_urls = [
         'https://www.coindesk.com/arc/outboundfeeds/rss/',
         'https://cointelegraph.com/rss',
         'https://cryptopotato.com/feed/'
     ]
-    bullish_keywords = ['surge', 'jump', 'rise', 'bull', 'high', 'adopt', 'approve', 'gain', 'positive', 'buy', 'up', 'soar', 'breakout', 'record']
-    bearish_keywords = ['drop', 'fall', 'crash', 'bear', 'low', 'ban', 'reject', 'lose', 'negative', 'sell', 'down', 'hack', 'scam', 'plunge']
     
-    bullish_score = 0
-    bearish_score = 0
+    analyzer = SentimentIntensityAnalyzer()
+    compound_scores = []
     unique_news = set()
     
     for url in rss_urls:
@@ -73,36 +69,37 @@ def fetch_crypto_news_sentiment():
                 title = item.find('title').text
                 if not title: 
                     continue
-                clean_title = re.sub(r'[^\w\s]', '', title.lower())
                 
+                clean_title = re.sub(r'[^\w\s]', '', title.lower())
                 if clean_title not in unique_news:
                     unique_news.add(clean_title)
-                    for word in bullish_keywords:
-                        if word in clean_title: 
-                            bullish_score += 1
-                    for word in bearish_keywords:
-                        if word in clean_title: 
-                            bearish_score += 1
-        except Exception:
+                    # Analisis VADER NLP
+                    sentiment = analyzer.polarity_scores(title)
+                    compound_scores.append(sentiment['compound'])
+        except Exception as e:
             continue
 
-    selisih = bullish_score - bearish_score
-    if selisih >= 3: 
+    if not compound_scores:
+        return "TIDAK ADA DATA BERITA ⚪"
+
+    avg_score = sum(compound_scores) / len(compound_scores)
+    
+    if avg_score >= 0.25: 
         return f"SANGAT POSITIF 🚀 ({len(unique_news)} Berita)"
-    elif selisih > 0: 
+    elif avg_score > 0.05: 
         return f"POSITIF RINGAN 🟢 ({len(unique_news)} Berita)"
-    elif selisih <= -3: 
+    elif avg_score <= -0.25: 
         return f"SANGAT NEGATIF 🚨 ({len(unique_news)} Berita)"
-    elif selisih < 0: 
+    elif avg_score < -0.05: 
         return f"NEGATIF RINGAN 🔴 ({len(unique_news)} Berita)"
     
     return f"NETRAL/SEIMBANG ⚪ ({len(unique_news)} Berita)"
 
 # ------------------------------------------------------------------------------
-# 2. MODUL DATA & FEATURE ENGINEERING (GABUNGAN)
+# 2. MODUL DATA (YFINANCE + INDODAX LIVE API) & FEATURE ENGINEERING
 # ------------------------------------------------------------------------------
 def fetch_and_engineer_features(period='180d', interval='1h'):
-    print("[*] Mengunduh data pasar dan memproses Feature Engineering...")
+    print("[*] Mengunduh data pasar historis...")
     df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
     
     if isinstance(df.columns, pd.MultiIndex): 
@@ -113,6 +110,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     
     df.index = df.index.tz_convert('Asia/Makassar') # WITA
 
+    # Konversi ke IDR
     try:
         idr_data = yf.download('IDR=X', period='5d', progress=False)
         if isinstance(idr_data.columns, pd.MultiIndex): 
@@ -124,6 +122,16 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     for col in ['Open', 'High', 'Low', 'Close']:
         if col in df.columns: 
             df[col] = df[col] * kurs_idr
+
+    # INJEKSI HARGA REAL-TIME DARI INDODAX
+    print("[*] Mengambil harga live dari API Indodax...")
+    try:
+        indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=5).json()
+        live_price = float(indodax_req['ticker']['last'])
+        # Timpa harga close terakhir dengan harga live Indodax agar AI menebak dari harga detik ini
+        df.loc[df.index[-1], 'Close'] = live_price
+    except Exception as e:
+        print(f"[!] Gagal mengambil API Indodax, menggunakan harga konversi YFinance. Error: {e}")
 
     # --- INDIKATOR UNTUK CHART ---
     df['MA_50'] = df['Close'].rolling(window=50).mean()
@@ -192,47 +200,46 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     # Target ML: 1 jika candle berikutnya naik, 0 jika turun
     df["Target"] = np.where(df["Close"].shift(-1) > df["Close"], 1, 0)
     
-    # Hapus NaN untuk ML, TAPI jangan buang baris terakhir
     features_cols = ["EMA_Spread","RSI","MACD_Hist","Return_1H","Return_3H","Return_6H",
                      "Volatility","Volume_Ratio","Trend_Slope","Momentum_Accel","Regime"]
     
     return df, features_cols
 
 # ------------------------------------------------------------------------------
-# 3. MODUL ENSEMBLE MACHINE LEARNING & CALIBRATION
+# 3. MODUL ENSEMBLE MACHINE LEARNING (ANTI LEAKAGE)
 # ------------------------------------------------------------------------------
 def train_and_predict(df, features):
-    print("[*] Melatih AI Ensemble (RandomForest, GradientBoosting, LogisticReg)...")
+    print("[*] Melatih AI Ensemble (Tanpa Data Leakage)...")
     
     train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
     X_train = train_df[features].values
     y_train = train_df["Target"].values
-    
-    latest_features = df[features].iloc[-1:]
-    
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_train)
-    X_latest_scaled = scaler.transform(latest_features)
+    latest_features = df[features].iloc[-1:].values
 
     lr = LogisticRegression()
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
     gb = GradientBoostingClassifier(random_state=42)
 
-    # AKURASI DENGAN CROSS-VALIDATION (AKURASI JUJUR)
+    # AKURASI DENGAN CROSS-VALIDATION YANG BENAR (Fit Scaler di dalam loop)
     tscv = TimeSeriesSplit(n_splits=5)
     cv_scores = []
     
-    for train_index, test_index in tscv.split(X_scaled):
-        X_tr, X_te = X_scaled[train_index], X_scaled[test_index]
+    for train_index, test_index in tscv.split(X_train):
+        X_tr, X_te = X_train[train_index], X_train[test_index]
         y_tr, y_te = y_train[train_index], y_train[test_index]
         
-        lr.fit(X_tr, y_tr)
-        rf.fit(X_tr, y_tr)
-        gb.fit(X_tr, y_tr)
+        # Mencegah kebocoran data masa depan
+        scaler_cv = StandardScaler()
+        X_tr_scaled = scaler_cv.fit_transform(X_tr)
+        X_te_scaled = scaler_cv.transform(X_te)
         
-        prob_lr_cv = lr.predict_proba(X_te)[:, 1]
-        prob_rf_cv = rf.predict_proba(X_te)[:, 1]
-        prob_gb_cv = gb.predict_proba(X_te)[:, 1]
+        lr.fit(X_tr_scaled, y_tr)
+        rf.fit(X_tr_scaled, y_tr)
+        gb.fit(X_tr_scaled, y_tr)
+        
+        prob_lr_cv = lr.predict_proba(X_te_scaled)[:, 1]
+        prob_rf_cv = rf.predict_proba(X_te_scaled)[:, 1]
+        prob_gb_cv = gb.predict_proba(X_te_scaled)[:, 1]
         
         ensemble_cv_prob = (prob_lr_cv + prob_rf_cv + prob_gb_cv) / 3
         fold_accuracy = accuracy_score(y_te, (ensemble_cv_prob > 0.5).astype(int))
@@ -241,6 +248,10 @@ def train_and_predict(df, features):
     accuracy = np.mean(cv_scores) * 100
     
     # FINAL TRAINING untuk Prediksi Hari Ini
+    final_scaler = StandardScaler()
+    X_scaled = final_scaler.fit_transform(X_train)
+    X_latest_scaled = final_scaler.transform(latest_features)
+
     lr_calibrated = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
     lr_calibrated.fit(X_scaled, y_train)
     rf.fit(X_scaled, y_train)
@@ -256,12 +267,13 @@ def train_and_predict(df, features):
     prob_gb = gb.predict_proba(X_latest_scaled)[0,1]
     latest_prob = (prob_lr + prob_rf + prob_gb) / 3
     
-    # LOGIKA "MESIN WAKTU" (ANTI-HINDSIGHT BIAS)
+    # LOGIKA "MESIN WAKTU" (Untuk mengevaluasi prediksi 1 jam sebelumnya)
     past_train_df = df.iloc[:-2].dropna(subset=features + ["Target"])
     if len(past_train_df) > 0:
-        X_past_train = scaler.transform(past_train_df[features].values)
+        scaler_past = StandardScaler()
+        X_past_train = scaler_past.fit_transform(past_train_df[features].values)
         y_past_train = past_train_df["Target"].values
-        X_past_target = scaler.transform(df[features].iloc[-2:-1].fillna(0)) 
+        X_past_target = scaler_past.transform(df[features].iloc[-2:-1].fillna(0).values) 
 
         lr_mesinwaktu = LogisticRegression()
         rf_mesinwaktu = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -281,7 +293,7 @@ def train_and_predict(df, features):
     return latest_prob, accuracy, true_past_prob, prob_all_past, train_df.index
 
 # ------------------------------------------------------------------------------
-# 4. MODUL MONTE CARLO & MANAJEMEN RISIKO
+# 4. MODUL MONTE CARLO & DYNAMIC KELLY CRITERION
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=24, sims=2000):
     print(f"[*] Menjalankan {sims} Simulasi Monte Carlo untuk {steps} jam ke depan...")
@@ -302,16 +314,26 @@ def monte_carlo_simulation(price, vol, steps=24, sims=2000):
     
     return expected, var95
 
-def position_sizing_kelly(prob, volatility):
-    edge = prob - (1 - prob)
+def position_sizing_kelly(prob, current_price, expected_price, var95):
+    # R = Reward / Risk
+    reward = expected_price - current_price
+    risk = current_price - var95
+    
+    # Hindari pembagian dengan nol atau R negatif
+    if risk > 0 and reward > 0:
+        r_ratio = reward / risk
+    else:
+        r_ratio = 1.0 # Default fallback
+        
+    edge = prob - ((1 - prob) / r_ratio)
     kelly = max(edge, 0)
-    vol_adjust = min(1 / (volatility * 100), 1)
-    size = kelly * vol_adjust
-    size = min(size, 0.25) 
+    
+    # Batasi maksimal 25% dari total portofolio agar manajemen risiko terjaga
+    size = min(kelly, 0.25) 
     return round(size * 100, 2)
 
 # ------------------------------------------------------------------------------
-# 5A. VISUALISASI CHART UTAMA (80 JAM - TIGA PANEL)
+# 5A. VISUALISASI CHART UTAMA (80 JAM)
 # ------------------------------------------------------------------------------
 def plot_professional_analysis(df, filename="chart_main.png"):
     plot_data = df.tail(80) 
@@ -326,10 +348,10 @@ def plot_professional_analysis(df, filename="chart_main.png"):
     ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=2)
     ax1.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Harga Bandar (VWAP)', color='#ff7f0e', linestyle='-.', linewidth=2)
     ax1.plot(plot_data.index, plot_data['MA_50'], label='Trend Menengah (MA50)', color='blue', alpha=0.6)
-    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15, label='Batas Harga Normal (Bollinger)')
+    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15, label='Batas Harga Normal')
 
     if 'Garis_Prediksi' in plot_data.columns:
-        ax1.plot(plot_data.index, plot_data['Garis_Prediksi'], label='Riwayat Prediksi AI (Masa Lalu)', color='red', linestyle='--', linewidth=2, alpha=0.8)
+        ax1.plot(plot_data.index, plot_data['Garis_Prediksi'], label='Riwayat Prediksi AI', color='red', linestyle='--', linewidth=2, alpha=0.8)
         
         last_time = plot_data.index[-1]
         next_time = last_time + pd.Timedelta(hours=1)
@@ -356,7 +378,7 @@ def plot_professional_analysis(df, filename="chart_main.png"):
     ax2.set_ylim(0, 100)
     ax2.legend(loc='upper left')
 
-    ax3.plot(plot_data.index, plot_data['ADX'], color='brown', linewidth=2, label='ADX (Kekuatan Tren Saat Ini)')
+    ax3.plot(plot_data.index, plot_data['ADX'], color='brown', linewidth=2, label='ADX (Kekuatan Tren)')
     ax3.axhline(25, color='black', linestyle='--', alpha=0.8, label='Batas Tren Kuat (>25)')
     ax3.fill_between(plot_data.index, plot_data['ADX'], 25, where=(plot_data['ADX'] >= 25), facecolor='gold', alpha=0.4)
     ax3.set_ylabel('Kekuatan Tren')
@@ -373,34 +395,30 @@ def plot_professional_analysis(df, filename="chart_main.png"):
     plt.close()
 
 # ------------------------------------------------------------------------------
-# 5B. VISUALISASI CHART ZOOM (6 JAM TERAKHIR + PREDIKSI MASA DEPAN)
+# 5B. VISUALISASI CHART ZOOM
 # ------------------------------------------------------------------------------
 def plot_zoomed_analysis(df, filename="chart_zoom.png"):
-    # Menarik 6 jam ke belakang (plus sedikit buffer untuk garis VWAP/MA agar terlihat)
     plot_data = df.tail(8) 
     plt.style.use('seaborn-v0_8-darkgrid')
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
     ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=3)
     ax1.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Harga Bandar (VWAP)', color='#ff7f0e', linestyle='-.', linewidth=2)
-    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15, label='Zona Bollinger')
+    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15)
 
     if 'Garis_Prediksi' in plot_data.columns:
         ax1.plot(plot_data.index, plot_data['Garis_Prediksi'], label='Riwayat Prediksi AI', color='red', linestyle='--', linewidth=2.5, alpha=0.8)
-        
         last_time = plot_data.index[-1]
         next_time = last_time + pd.Timedelta(hours=1)
         next_pred = plot_data['AI_Target'].iloc[-1]
         
-        ax1.scatter(next_time, next_pred, color='red', s=120, marker='o', zorder=10, label=f'Target AI Jam Depan: {format_rupiah(next_pred)}')
+        ax1.scatter(next_time, next_pred, color='red', s=120, marker='o', zorder=10)
         ax1.plot([last_time, next_time], [plot_data['Garis_Prediksi'].iloc[-1], next_pred], color='red', linestyle='--', linewidth=2.5)
 
     ax1.set_title('🔍 ZOOM-IN 6 JAM TERAKHIR & PREDIKSI ARAH', fontsize=18, fontweight='bold', pad=15)
     ax1.set_ylabel('Harga (IDR)')
     ax1.legend(loc='upper left', framealpha=0.9, fontsize=11)
     ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
-    
-    # Jam untuk zoom chart tidak perlu tanggal panjang, cukup jamnya saja
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     ax1.grid(True, linestyle='--', alpha=0.6)
 
@@ -409,20 +427,18 @@ def plot_zoomed_analysis(df, filename="chart_zoom.png"):
     plt.close()
 
 # ------------------------------------------------------------------------------
-# 6. MODUL TELEGRAM PENGIRIMAN (DUA FOTO)
+# 6. MODUL TELEGRAM PENGIRIMAN
 # ------------------------------------------------------------------------------
 def send_to_telegram(message, image_paths):
-    print("[*] Mengirim teks laporan dan grafik ke Telegram...")
+    print("[*] Mengirim laporan teks dan grafik ke Telegram...")
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("[!] Pengiriman dibatalkan. Token Telegram tidak disetel.")
         return
         
-    # Kirim Pesan Teks
     url_message = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload_msg = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
     requests.post(url_message, data=payload_msg)
 
-    # Kirim Semua Foto dalam list (Main Chart & Zoom Chart)
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     for path in image_paths:
         with open(path, 'rb') as photo:
@@ -434,7 +450,6 @@ def send_to_telegram(message, image_paths):
 # MAIN EXECUTION
 # ------------------------------------------------------------------------------
 def main():
-    start_time = time.time()
     print("==========================================================")
     print("      QUANT GODMODE PRO MAX ENGINE - BITCOIN INDODAX      ")
     print("==========================================================")
@@ -457,28 +472,21 @@ def main():
     
     # 3. Quant / Risk Management
     expected_24h, var95 = monte_carlo_simulation(latest_close, volatility)
-    exposure = position_sizing_kelly(latest_prob, volatility)
+    exposure = position_sizing_kelly(latest_prob, latest_close, expected_24h, var95)
     
     # 4. Evaluasi Performa
     waktu_data_terakhir = df.index[-1]
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
     selisih_menit = int(abs((sekarang_wita - waktu_data_terakhir).total_seconds()) / 60)
     
-    if selisih_menit <= 20:
-        info_server = f"⚡ Sangat Cepat (Data {selisih_menit}m lalu)"
-    elif selisih_menit <= 60:
-        info_server = f"✅ Normal (Data {selisih_menit}m lalu)"
-    else:
-        info_server = f"🐢 Delay Eksekusi (Data {selisih_menit}m lalu)"
+    if selisih_menit <= 20: info_server = f"⚡ Sangat Cepat (Data {selisih_menit}m lalu)"
+    elif selisih_menit <= 60: info_server = f"✅ Normal (Data {selisih_menit}m lalu)"
+    else: info_server = f"🐢 Delay Eksekusi (Data {selisih_menit}m lalu)"
     
     # Logika Evaluasi dengan Mesin Waktu AI yang Jujur
     prev_close = df['Close'].iloc[-2]
-    
-    if past_prob > 0.5: pred_arah_lalu = "NAIK"
-    else: pred_arah_lalu = "TURUN"
-        
-    if latest_close > prev_close: arah_asli = "Naik"
-    else: arah_asli = "Turun"
+    pred_arah_lalu = "NAIK" if past_prob > 0.5 else "TURUN"
+    arah_asli = "Naik" if latest_close > prev_close else "Turun"
 
     if (past_prob > 0.5 and latest_close > prev_close) or (past_prob <= 0.5 and latest_close <= prev_close): 
         eval_msg = f"BENAR ✅ (Sejam lalu AI prediksi {pred_arah_lalu}, dan terbukti {arah_asli})"
@@ -505,21 +513,19 @@ def main():
     pesan += f"🤖 *PREDIKSI AI 1 JAM KE DEPAN:*\n"
     pesan += f"_(Otak utama yang menebak arah tren pasar)_\n"
     pesan += f"├ Arah Harga: *{arah}*\n"
-    pesan += f"├ Keyakinan AI: *{confidence:.1f}%* (Makin tinggi makin yakin)\n"
-    pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Berdasarkan ujian data riwayat)\n"
+    pesan += f"├ Keyakinan AI: *{confidence:.1f}%*\n"
+    pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Tanpa Data Leakage)\n"
     pesan += f"└ Cek Sejam Lalu: {eval_msg}\n\n"
     
     pesan += f"🔮 *SIMULASI HARGA 24 JAM (MONTE CARLO):*\n"
-    pesan += f"_(AI mensimulasikan ribuan skenario untuk menebak harga besok)_\n"
     pesan += f"├ Harga Harapan: {format_rupiah(expected_24h)} (Target rata-rata wajar)\n"
     pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95)}\n"
-    pesan += f"   _↳ Penjelasan: AI yakin 95% harga tidak akan jatuh lebih dalam dari angka ini. Jika kamu trading, angka ini sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
+    pesan += f"   _↳ Penjelasan: Sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
     
     pesan += f"📊 *SARAN MANAJEMEN MODAL & PASAR:*\n"
-    pesan += f"_(Panduan agar saldo Indodax tetap aman)_\n"
     pesan += f"├ Alokasi Modal Aman: Gunakan *{exposure}%* dari total uangmu.\n"
-    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif bergerak)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Pasar sedang mendatar/sideways, jangan agresif)'}\n"
-    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Harga di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Harga di bawah rata-rata bandar)'}\n\n"
+    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Sideways, jangan agresif)'}\n"
+    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Di bawah rata-rata bandar)'}\n\n"
     
     pesan += f"📰 *SENTIMEN BERITA DUNIA:* {news_status}\n\n"
     
@@ -534,14 +540,12 @@ def main():
     pesan += "\n_ℹ️ Disclaimer: Angka ini dihitung oleh algoritma AI. Gunakan sebagai alat bantu, bukan jaminan pasti 100%._"
 
     # 6. Eksekusi Chart & Kirim
-    # Generate 2 Gambar
     chart_main = "chart_main.png"
     chart_zoom = "chart_zoom.png"
     
     plot_professional_analysis(df, chart_main)
     plot_zoomed_analysis(df, chart_zoom)
     
-    # Kirim ke Telegram (Akan Mengirimkan Pesan Teks lalu 2 Foto Berurutan)
     send_to_telegram(pesan, [chart_main, chart_zoom])
 
 if __name__ == "__main__":
