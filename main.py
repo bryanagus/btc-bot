@@ -1,7 +1,7 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX ENGINE (TIMEFRAME 1 JAM)
 # Fitur: Indodax Live API, VADER NLP, Dynamic Kelly, Anti-Data Leakage
-# Visual: Dual Chart (Main 80H & Zoom 6H), Garis Jejak AI, Teks Ramah Awam
+# Visual: Grafik USD Stabil, Teks IDR, Label Harga Visual, Dual Chart
 # Zona Waktu: WITA (Asia/Makassar)
 # ==============================================================================
 import pandas as pd
@@ -45,6 +45,11 @@ def format_rupiah(angka):
     if pd.isna(angka): 
         return "Rp 0"
     return f"Rp {angka:,.0f}".replace(',', '.')
+
+def format_usd(angka):
+    if pd.isna(angka): 
+        return "$0"
+    return f"${angka:,.0f}"
 
 # ------------------------------------------------------------------------------
 # 1. MODUL SENTIMEN BERITA DENGAN NLP (VADER)
@@ -98,10 +103,10 @@ def fetch_crypto_news_sentiment():
     return f"NETRAL/SEIMBANG ⚪ ({len(unique_news)} Berita)"
 
 # ------------------------------------------------------------------------------
-# 2. MODUL DATA (YFINANCE + INDODAX LIVE API) & FEATURE ENGINEERING
+# 2. MODUL DATA (GRAFIK DIKUNCI DI USD AGAR STABIL)
 # ------------------------------------------------------------------------------
 def fetch_and_engineer_features(period='180d', interval='1h'):
-    print("[*] Mengunduh data pasar historis...")
+    print("[*] Mengunduh data pasar (dalam format USD)...")
     df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
     
     if isinstance(df.columns, pd.MultiIndex): 
@@ -112,7 +117,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     
     df.index = df.index.tz_convert('Asia/Makassar') # WITA
 
-    # Konversi ke IDR
+    # Mengambil kurs USD/IDR untuk laporan Telegram nanti
     try:
         idr_data = yf.download('IDR=X', period='5d', progress=False)
         if isinstance(idr_data.columns, pd.MultiIndex): 
@@ -121,31 +126,32 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     except:
         kurs_idr = 16000.0
 
-    for col in ['Open', 'High', 'Low', 'Close']:
-        if col in df.columns: 
-            df[col] = df[col] * kurs_idr
-
+    indodax_live_idr = 0.0
+    
     # ====================================================================
-    # INJEKSI HARGA REAL-TIME DARI INDODAX (DENGAN PERBAIKAN CANDLESTICK)
+    # INJEKSI HARGA REAL-TIME DARI INDODAX (DIKONVERSI KE USD UNTUK GRAFIK)
     # ====================================================================
     print("[*] Mengambil harga live dari API Indodax...")
     try:
         indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=5).json()
-        live_price = float(indodax_req['ticker']['last'])
+        indodax_live_idr = float(indodax_req['ticker']['last'])
         
-        # Timpa harga close terakhir dengan harga live Indodax
-        df.loc[df.index[-1], 'Close'] = live_price
+        # Konversi harga Indodax ke USD khusus untuk masuk ke dalam DataFrame Grafik
+        live_price_usd = indodax_live_idr / kurs_idr
         
-        # FIX: Mencegah 'Candle Mutan' (Close > High atau Close < Low)
-        if live_price > df.loc[df.index[-1], 'High']:
-            df.loc[df.index[-1], 'High'] = live_price
-        if live_price < df.loc[df.index[-1], 'Low']:
-            df.loc[df.index[-1], 'Low'] = live_price
+        df.loc[df.index[-1], 'Close'] = live_price_usd
+        
+        # FIX: Mencegah 'Candle Mutan'
+        if live_price_usd > df.loc[df.index[-1], 'High']:
+            df.loc[df.index[-1], 'High'] = live_price_usd
+        if live_price_usd < df.loc[df.index[-1], 'Low']:
+            df.loc[df.index[-1], 'Low'] = live_price_usd
             
     except Exception as e:
-        print(f"[!] Gagal mengambil API Indodax, menggunakan harga konversi YFinance. Error: {e}")
+        print(f"[!] Gagal mengambil API Indodax, menggunakan harga YFinance. Error: {e}")
+        indodax_live_idr = df.loc[df.index[-1], 'Close'] * kurs_idr
 
-    # --- INDIKATOR UNTUK CHART ---
+    # --- SEMUA INDIKATOR DIHITUNG MENGGUNAKAN USD ---
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
@@ -215,7 +221,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     features_cols = ["EMA_Spread","RSI","MACD_Hist","Return_1H","Return_3H","Return_6H",
                      "Volatility","Volume_Ratio","Trend_Slope","Momentum_Accel","Regime"]
     
-    return df, features_cols
+    return df, features_cols, kurs_idr, indodax_live_idr
 
 # ------------------------------------------------------------------------------
 # 3. MODUL ENSEMBLE MACHINE LEARNING (ANTI LEAKAGE)
@@ -333,7 +339,6 @@ def position_sizing_kelly(prob, current_price, expected_price, var95):
     reward = expected_price - current_price
     risk = current_price - var95
     
-    # Hindari pembagian dengan nol atau R negatif
     if risk > 0 and reward > 0:
         r_ratio = reward / risk
     else:
@@ -347,7 +352,7 @@ def position_sizing_kelly(prob, current_price, expected_price, var95):
     return round(size * 100, 2)
 
 # ------------------------------------------------------------------------------
-# 5A. VISUALISASI CHART UTAMA (80 JAM)
+# 5A. VISUALISASI CHART UTAMA (80 JAM - FORMAT USD)
 # ------------------------------------------------------------------------------
 def plot_professional_analysis(df, filename="chart_main.png"):
     plot_data = df.tail(80) 
@@ -359,7 +364,7 @@ def plot_professional_analysis(df, filename="chart_main.png"):
     ax2 = fig.add_subplot(gs[1, 0])
     ax3 = fig.add_subplot(gs[2, 0])
 
-    ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=2)
+    ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC (USD)', color='black', linewidth=2)
     ax1.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Harga Bandar (VWAP)', color='#ff7f0e', linestyle='-.', linewidth=2)
     ax1.plot(plot_data.index, plot_data['MA_50'], label='Trend Menengah (MA50)', color='blue', alpha=0.6)
     ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15, label='Batas Harga Normal')
@@ -371,13 +376,14 @@ def plot_professional_analysis(df, filename="chart_main.png"):
         next_time = last_time + pd.Timedelta(hours=1)
         next_pred = plot_data['AI_Target'].iloc[-1]
         
-        ax1.scatter(next_time, next_pred, color='red', s=60, marker='o', zorder=10, label=f'Target AI Jam Depan: {format_rupiah(next_pred)}')
+        ax1.scatter(next_time, next_pred, color='red', s=60, marker='o', zorder=10, label=f'Target AI Jam Depan: {format_usd(next_pred)}')
         ax1.plot([last_time, next_time], [plot_data['Garis_Prediksi'].iloc[-1], next_pred], color='red', linestyle='--', linewidth=2)
 
     ax1.set_title('GRAFIK UTAMA AI & JEJAK RIWAYAT PREDIKSI (80 JAM)', fontsize=16, fontweight='bold', pad=15)
-    ax1.set_ylabel('Harga (IDR)')
+    ax1.set_ylabel('Harga (USD)')
     ax1.legend(loc='upper left', framealpha=0.9)
-    ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
+    # FORMAT USD DI SUMBU Y
+    ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: f"${int(x):,}"))
     
     myFmt = mdates.DateFormatter('%d %b\n%H:%M')
     hour_locator = mdates.HourLocator(interval=6) 
@@ -409,30 +415,48 @@ def plot_professional_analysis(df, filename="chart_main.png"):
     plt.close()
 
 # ------------------------------------------------------------------------------
-# 5B. VISUALISASI CHART ZOOM
+# 5B. VISUALISASI CHART ZOOM (LABEL HARGA SAJA TANPA JAM, DALAM USD)
 # ------------------------------------------------------------------------------
 def plot_zoomed_analysis(df, filename="chart_zoom.png"):
     plot_data = df.tail(8) 
     plt.style.use('seaborn-v0_8-darkgrid')
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
-    ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=3)
+    ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC (USD)', color='black', linewidth=3)
     ax1.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Harga Bandar (VWAP)', color='#ff7f0e', linestyle='-.', linewidth=2)
     ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15)
 
+    last_time = plot_data.index[-1]
+    last_price_usd = plot_data['Close'].iloc[-1]
+    next_time = last_time + pd.Timedelta(hours=1)
+    
     if 'Garis_Prediksi' in plot_data.columns:
         ax1.plot(plot_data.index, plot_data['Garis_Prediksi'], label='Riwayat Prediksi AI', color='red', linestyle='--', linewidth=2.5, alpha=0.8)
-        last_time = plot_data.index[-1]
-        next_time = last_time + pd.Timedelta(hours=1)
-        next_pred = plot_data['AI_Target'].iloc[-1]
+        next_pred_usd = plot_data['AI_Target'].iloc[-1]
         
-        ax1.scatter(next_time, next_pred, color='red', s=120, marker='o', zorder=10)
-        ax1.plot([last_time, next_time], [plot_data['Garis_Prediksi'].iloc[-1], next_pred], color='red', linestyle='--', linewidth=2.5)
+        ax1.scatter(next_time, next_pred_usd, color='red', s=120, marker='o', zorder=10)
+        ax1.plot([last_time, next_time], [plot_data['Garis_Prediksi'].iloc[-1], next_pred_usd], color='red', linestyle='--', linewidth=2.5)
+
+        # ==========================================================
+        # KOTAK LABEL HARGA VISUAL (TANPA JAM)
+        # ==========================================================
+        ax1.annotate(f"Harga: {format_usd(last_price_usd)}",
+                     (last_time, last_price_usd),
+                     xytext=(0, 15), textcoords='offset points', ha='center',
+                     bbox=dict(boxstyle="round,pad=0.4", fc="black", ec="none", alpha=0.8),
+                     color="white", fontweight='bold', fontsize=11, zorder=15)
+        
+        ax1.annotate(f"Target AI: {format_usd(next_pred_usd)}",
+                     (next_time, next_pred_usd),
+                     xytext=(0, 15), textcoords='offset points', ha='center',
+                     bbox=dict(boxstyle="round,pad=0.4", fc="red", ec="none", alpha=0.9),
+                     color="white", fontweight='bold', fontsize=11, zorder=15)
 
     ax1.set_title('🔍 ZOOM-IN 6 JAM TERAKHIR & PREDIKSI ARAH', fontsize=18, fontweight='bold', pad=15)
-    ax1.set_ylabel('Harga (IDR)')
+    ax1.set_ylabel('Harga (USD)')
     ax1.legend(loc='upper left', framealpha=0.9, fontsize=11)
-    ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
+    # FORMAT USD DI SUMBU Y
+    ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: f"${int(x):,}"))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     ax1.grid(True, linestyle='--', alpha=0.6)
 
@@ -469,13 +493,13 @@ def main():
     print("      QUANT GODMODE PRO MAX ENGINE - BITCOIN INDODAX      ")
     print("==========================================================")
     
-    # 1. Fetch & Proses Data
-    df, features = fetch_and_engineer_features()
+    # 1. Fetch & Proses Data (DALAM USD)
+    df, features, kurs_idr, indodax_live_idr = fetch_and_engineer_features()
     news_status = fetch_crypto_news_sentiment()
-    latest_close = df['Close'].iloc[-1]
+    latest_close_usd = df['Close'].iloc[-1]
     volatility = df["Volatility"].iloc[-1]
     
-    # 2. AI Machine Learning
+    # 2. AI Machine Learning (USD)
     latest_prob, ml_accuracy, past_prob, all_probs, train_idx = train_and_predict(df, features)
     
     df['AI_Prob'] = np.nan
@@ -485,11 +509,15 @@ def main():
     df['AI_Target'] = df['Close'] + (df['ATR'] * (df['AI_Prob'] - 0.5) * 2)
     df['Garis_Prediksi'] = df['AI_Target'].shift(1)
     
-    # 3. Quant / Risk Management
-    expected_24h, var95 = monte_carlo_simulation(latest_close, volatility)
-    exposure = position_sizing_kelly(latest_prob, latest_close, expected_24h, var95)
+    # 3. Quant / Risk Management (USD)
+    expected_24h_usd, var95_usd = monte_carlo_simulation(latest_close_usd, volatility)
+    exposure = position_sizing_kelly(latest_prob, latest_close_usd, expected_24h_usd, var95_usd)
     
-    # 4. Evaluasi Performa (Waktu Eksekusi)
+    # KONVERSI HASIL USD KE IDR UNTUK TEKS TELEGRAM
+    expected_24h_idr = expected_24h_usd * kurs_idr
+    var95_idr = var95_usd * kurs_idr
+    
+    # 4. Evaluasi Performa
     waktu_eksekusi = time.time() - start_time
     waktu_data_terakhir = df.index[-1]
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
@@ -500,15 +528,16 @@ def main():
     else: info_server = f"🐢 Delay Eksekusi (Data {selisih_menit}m lalu)"
     
     # Logika Evaluasi dengan Mesin Waktu AI yang Jujur
-    prev_close = df['Close'].iloc[-2]
+    prev_close_usd = df['Close'].iloc[-2]
     pred_arah_lalu = "NAIK" if past_prob > 0.5 else "TURUN"
-    arah_asli = "Naik" if latest_close > prev_close else "Turun"
+    arah_asli = "Naik" if latest_close_usd > prev_close_usd else "Turun"
 
-    if (past_prob > 0.5 and latest_close > prev_close) or (past_prob <= 0.5 and latest_close <= prev_close): 
+    if (past_prob > 0.5 and latest_close_usd > prev_close_usd) or (past_prob <= 0.5 and latest_close_usd <= prev_close_usd): 
         eval_msg = f"BENAR ✅ (Sejam lalu AI prediksi {pred_arah_lalu}, dan terbukti {arah_asli})"
     else: 
         eval_msg = f"SALAH ❌ (Sejam lalu AI prediksi {pred_arah_lalu}, tapi harga malah {arah_asli})"
 
+    # Logika Arah & Rekomendasi
     confidence = max(latest_prob, 1 - latest_prob) * 100
     if latest_prob >= 0.60:
         arah, rekomendasi = "NAIK KUAT 🚀", "MOMENTUM EMAS UNTUK BELI (STRONG BUY)"
@@ -519,34 +548,36 @@ def main():
     else:
         arah, rekomendasi = "Cenderung TURUN 📉", "POTENSI TURUN, LEBIH BAIK MENUNGGU (WAIT/SELL)"
 
-    # 5. Susun Pesan Telegram (DENGAN PANEL SYSTEM HEALTH YANG DIKEMBALIKAN)
+    # 5. Susun Pesan Telegram (BAHASA INDONESIA, ANGKA RUPIAH/IDR)
     pesan = f"💎 *LAPORAN TRADING AI GODMODE* 💎\n"
     pesan += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
-    # PANEL SYSTEM HEALTH (RESTORED)
+    # PANEL SYSTEM HEALTH KEMBALI
     pesan += f"⚙️ *Kondisi Server & Sistem:*\n"
     pesan += f"├ Sinkronisasi: {info_server}\n"
     pesan += f"├ Waktu Candle: {waktu_data_terakhir.strftime('%H:%M WITA')}\n"
     pesan += f"└ Beban Engine AI: {waktu_eksekusi:.1f} detik\n\n"
     
-    pesan += f"💰 *Harga BTC Sekarang:* {format_rupiah(latest_close)}\n\n"
+    pesan += f"💰 *Harga BTC Sekarang:* {format_rupiah(indodax_live_idr)}\n\n"
     
     pesan += f"🤖 *PREDIKSI AI 1 JAM KE DEPAN:*\n"
     pesan += f"_(Otak utama yang menebak arah tren pasar)_\n"
     pesan += f"├ Arah Harga: *{arah}*\n"
-    pesan += f"├ Keyakinan AI: *{confidence:.1f}%*\n"
+    pesan += f"├ Keyakinan AI: *{confidence:.1f}%* (Makin tinggi makin akurat)\n"
     pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Tanpa Data Leakage)\n"
     pesan += f"└ Cek Sejam Lalu: {eval_msg}\n\n"
     
     pesan += f"🔮 *SIMULASI HARGA 24 JAM (MONTE CARLO):*\n"
-    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h)} (Target rata-rata wajar)\n"
-    pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95)}\n"
+    pesan += f"_(AI mensimulasikan ribuan skenario untuk menebak harga besok)_\n"
+    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h_idr)} (Target rata-rata wajar)\n"
+    pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95_idr)}\n"
     pesan += f"   _↳ Penjelasan: Sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
     
     pesan += f"📊 *SARAN MANAJEMEN MODAL & PASAR:*\n"
-    pesan += f"├ Alokasi Modal Aman: Gunakan *{exposure}%* dari total uangmu.\n"
-    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Sideways, jangan agresif)'}\n"
-    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Di bawah rata-rata bandar)'}\n\n"
+    pesan += f"_(Panduan agar saldo Indodax tetap aman)_\n"
+    pesan += f"├ Alokasi Modal Aman: Gunakan maksimal *{exposure}%* dari total saldomu.\n"
+    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif bergerak)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Pasar sedang mendatar/sideways, santai saja)'}\n"
+    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Harga di atas rata-rata tarikan bandar)' if latest_close_usd > df['VWAP_24'].iloc[-1] else 'Waspada (Harga di bawah rata-rata bandar)'}\n\n"
     
     pesan += f"📰 *SENTIMEN BERITA DUNIA:* {news_status}\n\n"
     
@@ -554,11 +585,11 @@ def main():
     pesan += f"*{rekomendasi}*\n\n"
     
     if latest_prob > 0.5:
-        pesan += f"💡 _Saran Trading: Pasang Cut Loss di dekat {format_rupiah(var95)} dan Jual Untung (TP) di kisaran {format_rupiah(expected_24h)}._\n"
+        pesan += f"💡 _Saran Trading: Pasang Cut Loss di dekat {format_rupiah(var95_idr)} dan Jual Untung (TP) di kisaran {format_rupiah(expected_24h_idr)}._\n"
     else:
         pesan += f"💡 _Saran Trading: Lebih baik simpan aset/uang tunai dulu karena risiko penurunan sedang tinggi._\n"
         
-    pesan += "\n_ℹ️ Disclaimer: Angka ini dihitung oleh algoritma AI. Gunakan sebagai alat bantu, bukan jaminan pasti 100%._"
+    pesan += "\n_ℹ️ Note: Khusus di foto Grafik menggunakan format Dolar (USD) agar bentuk grafiknya stabil._"
 
     # 6. Eksekusi Chart & Kirim
     chart_main = "chart_main.png"
