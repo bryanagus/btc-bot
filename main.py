@@ -497,32 +497,59 @@ def main():
 
     if exposure == 0:
         rekomendasi = "TUNGGU (WAIT) - Risiko terlalu tinggi atau tren menurun menurut sistem matematika."
+        saran_trading = "Lebih baik simpan aset/uang tunai dulu karena risiko penurunan sedang tinggi."
+    elif latest_prob >= 0.60:
+        saran_trading = "Momentum sangat bagus, pertimbangkan untuk masuk dengan alokasi modal maksimal yang disarankan."
+    elif latest_prob > 0.50:
+        saran_trading = "Pasar terlihat positif, pertimbangkan untuk masuk secara bertahap sesuai alokasi modal."
+    else:
+        saran_trading = "Tetap waspada, pantau pergerakan pasar sebelum mengambil keputusan besar."
 
-    # 6. Susun Pesan Telegram
+    # Kalkulasi Status Sistem & Pasar
+    waktu_candle = waktu_data_terakhir.strftime('%H:%M WITA')
+    selisih_menit = int((sekarang_wita - waktu_data_terakhir).total_seconds() / 60)
+    status_sinkronisasi = f"⚡ Sangat Cepat (Data {selisih_menit}m lalu)" if selisih_menit <= 15 else f"⏳ Normal (Data {selisih_menit}m lalu)"
+    
+    vwap_status = "Aman (Harga di atas rata-rata tarikan bandar)" if latest_close_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah rata-rata tarikan bandar)"
+    tren_status = "Kuat (Pasar sedang aktif bergerak)" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways (Pasar ragu-ragu)"
+
+    # 6. Susun Pesan Telegram (KOMBINASI FORMAT BARU & LAMA)
     pesan = f"💎 *LAPORAN TRADING AI GODMODE (ANTI-REPAINT)* 💎\n"
     pesan += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
-    pesan += f"💰 *Harga BTC (Indodax):* {format_rupiah(indodax_live_idr)}\n\n"
+    pesan += f"⚙️ *Kondisi Server & Sistem:*\n"
+    pesan += f"├ Sinkronisasi: {status_sinkronisasi}\n"
+    pesan += f"├ Waktu Candle: {waktu_candle}\n"
+    pesan += f"└ Beban Engine AI: {waktu_eksekusi:.1f} detik\n\n"
+    
+    pesan += f"💰 *Harga BTC Sekarang:* {format_rupiah(indodax_live_idr)}\n\n"
     
     pesan += f"🤖 *PREDIKSI AI 1 JAM KE DEPAN:*\n"
+    pesan += f"_(Otak utama yang menebak arah tren pasar)_\n"
     pesan += f"├ Arah Harga: *{arah}*\n"
-    pesan += f"├ Keyakinan AI: *{confidence:.1f}%*\n"
-    pesan += f"├ Akurasi Model: {ml_accuracy:.1f}% (Zero Leakage)\n"
-    pesan += f"└ Evaluasi Jujur: {eval_msg}\n\n"
+    pesan += f"├ Keyakinan AI: *{confidence:.1f}%* (Makin tinggi makin akurat)\n"
+    pesan += f"├ Akurasi AI: *{ml_accuracy:.1f}%* (Tanpa Data Leakage)\n"
+    pesan += f"└ Cek Sejam Lalu: {eval_msg}\n\n"
     
-    pesan += f"🔮 *SIMULASI RISIKO 24 JAM (MONTE CARLO):*\n"
-    pesan += f"├ Target Rata-rata: {format_rupiah(expected_24h_idr)}\n"
-    pesan += f"└ Batas Cut Loss (VaR 95%): {format_rupiah(var95_idr)}\n\n"
+    pesan += f"🔮 *SIMULASI HARGA 24 JAM (MONTE CARLO):*\n"
+    pesan += f"_(AI mensimulasikan ribuan skenario untuk menebak harga besok)_\n"
+    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h_idr)} (Target rata-rata wajar)\n"
+    pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95_idr)}\n"
+    pesan += f"   ↳ _Penjelasan: Sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
     
-    pesan += f"📊 *MANAJEMEN MODAL (KELLY CRITERION):*\n"
-    pesan += f"├ Alokasi Beli Disarankan: *{exposure}%* dari modal.\n"
-    pesan += f"└ Tren Saat Ini: {'Kuat' if df['ADX'].iloc[-1] > 25 else 'Lemah / Sideways'}\n\n"
+    pesan += f"📊 *SARAN MANAJEMEN MODAL & PASAR:*\n"
+    pesan += f"_(Panduan agar saldo Indodax tetap aman)_\n"
+    pesan += f"├ Alokasi Modal Aman: Gunakan maksimal *{exposure}%* dari total saldomu.\n"
+    pesan += f"├ Tren Saat Ini (ADX): {tren_status}\n"
+    pesan += f"└ Posisi Bandar (VWAP): {vwap_status}\n\n"
     
-    pesan += f"📰 *SENTIMEN BERITA CRYPTO:* {news_status}\n\n"
+    pesan += f"📰 *SENTIMEN BERITA DUNIA:* {news_status}\n\n"
     
     pesan += f"📌 *KESIMPULAN AKHIR:*\n"
-    pesan += f"*{rekomendasi}*\n"
-    pesan += f"_Engine Load: {waktu_eksekusi:.1f} detik_"
+    pesan += f"*{rekomendasi}*\n\n"
+    
+    pesan += f"💡 *Saran Trading:* {saran_trading}\n\n"
+    pesan += f"ℹ️ _Note: Khusus di foto Grafik menggunakan format Dolar (USD) agar bentuk grafiknya stabil._"
 
     # 7. Eksekusi Chart & Kirim
     chart_main = "chart_main.png"
