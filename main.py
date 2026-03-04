@@ -1,8 +1,7 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX ENGINE (TIMEFRAME 1 JAM)
-# Fitur: Ensemble Machine Learning, Monte Carlo, Kelly Risk Engine, 
-#        Multi-Source News, ADX, VWAP, Telegram Reporting & Charting
-# Pembaruan: Indodax Live API (Fixed Candle), VADER NLP, Dynamic Kelly, No Data Leakage
+# Fitur: Indodax Live API, VADER NLP, Dynamic Kelly, Anti-Data Leakage
+# Visual: Dual Chart (Main 80H & Zoom 6H), Garis Jejak AI, Teks Ramah Awam
 # Zona Waktu: WITA (Asia/Makassar)
 # ==============================================================================
 import pandas as pd
@@ -134,10 +133,10 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
         indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=5).json()
         live_price = float(indodax_req['ticker']['last'])
         
-        # Timpa harga close terakhir dengan harga live Indodax agar AI menebak dari harga detik ini
+        # Timpa harga close terakhir dengan harga live Indodax
         df.loc[df.index[-1], 'Close'] = live_price
         
-        # FIX: Mencegah 'Candle Mutan' (Close lebih tinggi dari High atau lebih rendah dari Low)
+        # FIX: Mencegah 'Candle Mutan' (Close > High atau Close < Low)
         if live_price > df.loc[df.index[-1], 'High']:
             df.loc[df.index[-1], 'High'] = live_price
         if live_price < df.loc[df.index[-1], 'Low']:
@@ -227,7 +226,9 @@ def train_and_predict(df, features):
     train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
     X_train = train_df[features].values
     y_train = train_df["Target"].values
-    latest_features = df[features].iloc[-1:].values
+    
+    # FIX POTENSI CRASH: Tambahkan fillna(0) sebelum dijadikan values
+    latest_features = df[features].iloc[-1:].fillna(0).values
 
     lr = LogisticRegression()
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
@@ -463,6 +464,7 @@ def send_to_telegram(message, image_paths):
 # MAIN EXECUTION
 # ------------------------------------------------------------------------------
 def main():
+    start_time = time.time()
     print("==========================================================")
     print("      QUANT GODMODE PRO MAX ENGINE - BITCOIN INDODAX      ")
     print("==========================================================")
@@ -487,7 +489,8 @@ def main():
     expected_24h, var95 = monte_carlo_simulation(latest_close, volatility)
     exposure = position_sizing_kelly(latest_prob, latest_close, expected_24h, var95)
     
-    # 4. Evaluasi Performa
+    # 4. Evaluasi Performa (Waktu Eksekusi)
+    waktu_eksekusi = time.time() - start_time
     waktu_data_terakhir = df.index[-1]
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
     selisih_menit = int(abs((sekarang_wita - waktu_data_terakhir).total_seconds()) / 60)
@@ -516,31 +519,34 @@ def main():
     else:
         arah, rekomendasi = "Cenderung TURUN 📉", "POTENSI TURUN, LEBIH BAIK MENUNGGU (WAIT/SELL)"
 
-    # 5. Susun Pesan Telegram (BAHASA SUPER RAMAH AWAM)
+    # 5. Susun Pesan Telegram (DENGAN PANEL SYSTEM HEALTH YANG DIKEMBALIKAN)
     pesan = f"💎 *LAPORAN TRADING AI GODMODE* 💎\n"
     pesan += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
-    pesan += f"💰 *Harga BTC Sekarang:* {format_rupiah(latest_close)}\n"
-    pesan += f"⏱️ *Kondisi Server:* {info_server}\n\n"
+    # PANEL SYSTEM HEALTH (RESTORED)
+    pesan += f"⚙️ *Kondisi Server & Sistem:*\n"
+    pesan += f"├ Sinkronisasi: {info_server}\n"
+    pesan += f"├ Waktu Candle: {waktu_data_terakhir.strftime('%H:%M WITA')}\n"
+    pesan += f"└ Beban Engine AI: {waktu_eksekusi:.1f} detik\n\n"
+    
+    pesan += f"💰 *Harga BTC Sekarang:* {format_rupiah(latest_close)}\n\n"
     
     pesan += f"🤖 *PREDIKSI AI 1 JAM KE DEPAN:*\n"
     pesan += f"_(Otak utama yang menebak arah tren pasar)_\n"
     pesan += f"├ Arah Harga: *{arah}*\n"
-    pesan += f"├ Keyakinan AI: *{confidence:.1f}%* (Makin tinggi makin akurat)\n"
-    pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Sudah teruji bebas error)\n"
+    pesan += f"├ Keyakinan AI: *{confidence:.1f}%*\n"
+    pesan += f"├ Akurasi AI: {ml_accuracy:.1f}% (Tanpa Data Leakage)\n"
     pesan += f"└ Cek Sejam Lalu: {eval_msg}\n\n"
     
     pesan += f"🔮 *SIMULASI HARGA 24 JAM (MONTE CARLO):*\n"
-    pesan += f"_(AI mensimulasikan ribuan skenario untuk menebak harga besok)_\n"
-    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h)} (Target wajar/TP)\n"
+    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h)} (Target rata-rata wajar)\n"
     pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95)}\n"
-    pesan += f"   _↳ Penjelasan: AI sangat yakin (95%) harga tidak akan anjlok melebihi batas ini. Jadikan sebagai patokan Cut Loss (SL)._\n\n"
+    pesan += f"   _↳ Penjelasan: Sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
     
     pesan += f"📊 *SARAN MANAJEMEN MODAL & PASAR:*\n"
-    pesan += f"_(Panduan agar saldo Indodax tetap aman)_\n"
-    pesan += f"├ Alokasi Modal Aman: Gunakan maksimal *{exposure}%* dari total saldomu.\n"
-    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif bergerak)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Pasar sedang mendatar/sideways, santai saja)'}\n"
-    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Harga di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Harga di bawah rata-rata bandar)'}\n\n"
+    pesan += f"├ Alokasi Modal Aman: Gunakan *{exposure}%* dari total uangmu.\n"
+    pesan += f"├ Tren Saat Ini (ADX): {'Kuat (Pasar sedang aktif)' if df['ADX'].iloc[-1] > 25 else 'Lemah (Sideways, jangan agresif)'}\n"
+    pesan += f"└ Posisi Bandar (VWAP): {'Aman (Di atas rata-rata tarikan bandar)' if latest_close > df['VWAP_24'].iloc[-1] else 'Waspada (Di bawah rata-rata bandar)'}\n\n"
     
     pesan += f"📰 *SENTIMEN BERITA DUNIA:* {news_status}\n\n"
     
