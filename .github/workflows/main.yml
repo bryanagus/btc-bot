@@ -24,7 +24,8 @@ jobs:
           python -m pip install --upgrade pip
           # Menginstal semua library sekaligus agar cepat, termasuk scikit-learn vaderSentiment
           pip install pandas numpy matplotlib yfinance pytz requests scikit-learn vaderSentiment
-
+          pip freeze
+          
       - name: Run Script
         run: python main.py
         env:
