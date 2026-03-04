@@ -31,7 +31,9 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score
 
+# Mematikan warning yang tidak perlu agar log GitHub bersih
 warnings.filterwarnings('ignore')
+pd.options.mode.chained_assignment = None 
 
 # ================= KONFIGURASI TELEGRAM & SERVER =================
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -126,7 +128,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     except:
         indodax_live_idr = float(df['Close'].iloc[-1]) * kurs_idr
 
-    # Indikator ML dihitung menggunakan data global
+    # Indikator ML dihitung menggunakan data global (Mencegah ilusi premium)
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
@@ -187,10 +189,13 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
 def train_and_predict_honest(df, features):
     print("[*] Melatih AI Ensemble (Zero Leakage Pipeline)...")
     
-    train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
+    # [BUG FIXED] Membuang 2 baris terakhir. Karena target baris -2 bergantung pada
+    # baris -1 (yang merupakan candle live). Ini memastikan 100% Zero Data Leakage.
+    train_df = df.iloc[:-2].dropna(subset=features + ["Target"])
     X_train = train_df[features].values
     y_train = train_df["Target"].values
     
+    # Data prediksi tetap mengambil candle terbaru (live)
     X_live = df[features].iloc[-1:].fillna(0).values
 
     scaler = StandardScaler()
@@ -262,7 +267,6 @@ def save_and_load_predictions(df, latest_prob):
     if file_exists:
         try:
             history = pd.read_csv(HISTORY_FILE)
-            # Pastikan parsing zona waktu tepat untuk dicocokkan dengan index df
             history['timestamp_target'] = pd.to_datetime(history['timestamp_target'], utc=True).dt.tz_convert('Asia/Makassar')
             
             for _, row in history.iterrows():
@@ -548,7 +552,8 @@ def main():
     pesan += f"📌 *KESIMPULAN AKHIR:*\n"
     pesan += f"*{rekomendasi}*\n\n"
     
-    pesan += f"💡 *Saran Trading:* {saran_trading}\n\n"
+    pesan += f"💡 *Saran Trading:* {saran_trading}\n"
+    pesan += f"🎯 _(Opsional) Pasang Cut Loss di {format_rupiah(var95_idr)} dan Take Profit di {format_rupiah(expected_24h_idr)}._\n\n"
     pesan += f"ℹ️ _Note: Khusus di foto Grafik menggunakan format Dolar (USD) agar bentuk grafiknya stabil._"
 
     # 7. Eksekusi Chart & Kirim
