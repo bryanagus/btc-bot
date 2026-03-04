@@ -2,7 +2,7 @@
 # BTC QUANT GODMODE PRO MAX ENGINE (TIMEFRAME 1 JAM)
 # Fitur: Ensemble Machine Learning, Monte Carlo, Kelly Risk Engine, 
 #        Multi-Source News, ADX, VWAP, Telegram Reporting & Charting
-# Pembaruan: Validasi Akurasi Real, Teks Ramah Awam, Mesin Waktu AI & Garis Prediksi
+# Pembaruan: Dual Chart (Main & Zoom 6H), Mesin Waktu AI, Akurasi Jujur
 # Zona Waktu: WITA (Asia/Makassar)
 # ==============================================================================
 import pandas as pd
@@ -125,7 +125,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
         if col in df.columns: 
             df[col] = df[col] * kurs_idr
 
-    # --- INDIKATOR UNTUK CHART (PRO MAX) ---
+    # --- INDIKATOR UNTUK CHART ---
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
@@ -160,7 +160,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     else:
         df['VWAP_24'] = df['Close']
 
-    # --- FITUR UNTUK MACHINE LEARNING (GODMODE) ---
+    # --- FITUR UNTUK MACHINE LEARNING ---
     df["EMA20"] = df["Close"].ewm(span=20).mean()
     df["EMA50"] = df["Close"].ewm(span=50).mean()
     df["EMA_Spread"] = (df["EMA20"] - df["EMA50"]) / df["Close"]
@@ -181,12 +181,9 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     else:
         df["Volume_Ratio"] = 1
     
-    # Hindari error polyfit dengan apply yang aman
     def calc_slope(x):
-        try: 
-            return np.polyfit(range(len(x)), x, 1)[0]
-        except: 
-            return 0
+        try: return np.polyfit(range(len(x)), x, 1)[0]
+        except: return 0
             
     df["Trend_Slope"] = df["Close"].rolling(12).apply(calc_slope, raw=True)
     df["Momentum_Accel"] = df["Return_1H"].diff()
@@ -195,19 +192,18 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     # Target ML: 1 jika candle berikutnya naik, 0 jika turun
     df["Target"] = np.where(df["Close"].shift(-1) > df["Close"], 1, 0)
     
-    # Hapus NaN untuk ML, TAPI jangan buang baris terakhir (karena itu untuk diprediksi)
+    # Hapus NaN untuk ML, TAPI jangan buang baris terakhir
     features_cols = ["EMA_Spread","RSI","MACD_Hist","Return_1H","Return_3H","Return_6H",
                      "Volatility","Volume_Ratio","Trend_Slope","Momentum_Accel","Regime"]
     
     return df, features_cols
 
 # ------------------------------------------------------------------------------
-# 3. MODUL ENSEMBLE MACHINE LEARNING & CALIBRATION (AKURASI JUJUR)
+# 3. MODUL ENSEMBLE MACHINE LEARNING & CALIBRATION
 # ------------------------------------------------------------------------------
 def train_and_predict(df, features):
     print("[*] Melatih AI Ensemble (RandomForest, GradientBoosting, LogisticReg)...")
     
-    # Pisahkan data training (semua kecuali baris terakhir) dan data terkini (baris terakhir)
     train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
     X_train = train_df[features].values
     y_train = train_df["Target"].values
@@ -218,15 +214,11 @@ def train_and_predict(df, features):
     X_scaled = scaler.fit_transform(X_train)
     X_latest_scaled = scaler.transform(latest_features)
 
-    # Inisialisasi Model
     lr = LogisticRegression()
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
     gb = GradientBoostingClassifier(random_state=42)
 
-    # ====================================================================
-    # MENGHITUNG AKURASI DENGAN CROSS-VALIDATION (AKURASI JUJUR)
-    # AI dilatih dan diuji pada periode waktu yang berbeda agar tidak "menghafal"
-    # ====================================================================
+    # AKURASI DENGAN CROSS-VALIDATION (AKURASI JUJUR)
     tscv = TimeSeriesSplit(n_splits=5)
     cv_scores = []
     
@@ -248,39 +240,29 @@ def train_and_predict(df, features):
         
     accuracy = np.mean(cv_scores) * 100
     
-    # ====================================================================
-    # FINAL TRAINING: Melatih ulang menggunakan seluruh data untuk prediksi HARI INI
-    # ====================================================================
+    # FINAL TRAINING untuk Prediksi Hari Ini
     lr_calibrated = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
     lr_calibrated.fit(X_scaled, y_train)
     rf.fit(X_scaled, y_train)
     gb.fit(X_scaled, y_train)
 
-    # Dapatkan seluruh probabilitas riwayat masa lalu (Untuk ditarik garisnya di Chart)
     prob_lr_past = lr_calibrated.predict_proba(X_scaled)[:, 1]
     prob_rf_past = rf.predict_proba(X_scaled)[:, 1]
     prob_gb_past = gb.predict_proba(X_scaled)[:, 1]
     prob_all_past = (prob_lr_past + prob_rf_past + prob_gb_past) / 3
 
-    # Prediksi Data Terkini (Untuk Sinyal Buy/Sell saat ini)
     prob_lr = lr_calibrated.predict_proba(X_latest_scaled)[0,1]
     prob_rf = rf.predict_proba(X_latest_scaled)[0,1]
     prob_gb = gb.predict_proba(X_latest_scaled)[0,1]
     latest_prob = (prob_lr + prob_rf + prob_gb) / 3
     
-    # ====================================================================
-    # LOGIKA "MESIN WAKTU" UNTUK EVALUASI JAM LALU (ANTI-HINDSIGHT BIAS)
-    # Kita memotong memori AI 1 jam ke belakang agar dia tidak "berbohong"
-    # ====================================================================
+    # LOGIKA "MESIN WAKTU" (ANTI-HINDSIGHT BIAS)
     past_train_df = df.iloc[:-2].dropna(subset=features + ["Target"])
     if len(past_train_df) > 0:
         X_past_train = scaler.transform(past_train_df[features].values)
         y_past_train = past_train_df["Target"].values
-        
-        # Fitur dari 1 jam yang lalu (sebelum candle sekarang terbentuk). fillna agar aman.
         X_past_target = scaler.transform(df[features].iloc[-2:-1].fillna(0)) 
 
-        # Melatih otak AI murni dengan data masa lalu
         lr_mesinwaktu = LogisticRegression()
         rf_mesinwaktu = RandomForestClassifier(n_estimators=100, random_state=42)
         gb_mesinwaktu = GradientBoostingClassifier(random_state=42)
@@ -289,19 +271,17 @@ def train_and_predict(df, features):
         rf_mesinwaktu.fit(X_past_train, y_past_train)
         gb_mesinwaktu.fit(X_past_train, y_past_train)
 
-        # Tebakan Murni dari masa lalu (Sama persis dengan telegram sejam lalu)
         p_lr_past = lr_mesinwaktu.predict_proba(X_past_target)[0,1]
         p_rf_past = rf_mesinwaktu.predict_proba(X_past_target)[0,1]
         p_gb_past = gb_mesinwaktu.predict_proba(X_past_target)[0,1]
         true_past_prob = (p_lr_past + p_rf_past + p_gb_past) / 3
     else:
-        # Jika data belum cukup (sangat jarang terjadi)
         true_past_prob = 0.5
 
     return latest_prob, accuracy, true_past_prob, prob_all_past, train_df.index
 
 # ------------------------------------------------------------------------------
-# 4. MODUL MONTE CARLO & MANAJEMEN RISIKO (GODMODE)
+# 4. MODUL MONTE CARLO & MANAJEMEN RISIKO
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=24, sims=2000):
     print(f"[*] Menjalankan {sims} Simulasi Monte Carlo untuk {steps} jam ke depan...")
@@ -331,9 +311,9 @@ def position_sizing_kelly(prob, volatility):
     return round(size * 100, 2)
 
 # ------------------------------------------------------------------------------
-# 5. MODUL VISUALISASI CHART PROFESIONAL (GARIS PREDIKSI TANPA BINTANG)
+# 5A. VISUALISASI CHART UTAMA (80 JAM - TIGA PANEL)
 # ------------------------------------------------------------------------------
-def plot_professional_analysis(df, filename="chart.png"):
+def plot_professional_analysis(df, filename="chart_main.png"):
     plot_data = df.tail(80) 
     plt.style.use('seaborn-v0_8-darkgrid')
     fig = plt.figure(figsize=(14, 12))
@@ -343,7 +323,6 @@ def plot_professional_analysis(df, filename="chart.png"):
     ax2 = fig.add_subplot(gs[1, 0])
     ax3 = fig.add_subplot(gs[2, 0])
 
-    # Plot Utama
     ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=2)
     ax1.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Harga Bandar (VWAP)', color='#ff7f0e', linestyle='-.', linewidth=2)
     ax1.plot(plot_data.index, plot_data['MA_50'], label='Trend Menengah (MA50)', color='blue', alpha=0.6)
@@ -356,21 +335,21 @@ def plot_professional_analysis(df, filename="chart.png"):
         next_time = last_time + pd.Timedelta(hours=1)
         next_pred = plot_data['AI_Target'].iloc[-1]
         
-        # Titik merah yang tidak mencolok (s=60, marker='o') sebagai ganti bintang raksasa
         ax1.scatter(next_time, next_pred, color='red', s=60, marker='o', zorder=10, label=f'Target AI Jam Depan: {format_rupiah(next_pred)}')
         ax1.plot([last_time, next_time], [plot_data['Garis_Prediksi'].iloc[-1], next_pred], color='red', linestyle='--', linewidth=2)
 
-    ax1.set_title('GRAFIK AI & JEJAK RIWAYAT PREDIKSI - WITA', fontsize=16, fontweight='bold', pad=15)
+    ax1.set_title('GRAFIK UTAMA AI & JEJAK RIWAYAT PREDIKSI (80 JAM)', fontsize=16, fontweight='bold', pad=15)
     ax1.set_ylabel('Harga (IDR)')
     ax1.legend(loc='upper left', framealpha=0.9)
     ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
     
     myFmt = mdates.DateFormatter('%d %b\n%H:%M')
+    hour_locator = mdates.HourLocator(interval=6) 
     
     ax2.plot(plot_data.index, plot_data['RSI'], color='purple', label='RSI (Momentum Harga)')
     ax2.plot(plot_data.index, plot_data['StochRSI']*100, color='cyan', alpha=0.5, label='StochRSI (Lebih Sensitif)')
-    ax2.axhline(70, color='red', linestyle='--', alpha=0.5, label='Jenuh Beli (Rentan Turun)')
-    ax2.axhline(30, color='green', linestyle='--', alpha=0.5, label='Jenuh Jual (Rentan Naik)')
+    ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
+    ax2.axhline(30, color='green', linestyle='--', alpha=0.5)
     ax2.fill_between(plot_data.index, plot_data['RSI'], 70, where=(plot_data['RSI'] >= 70), facecolor='red', alpha=0.3)
     ax2.fill_between(plot_data.index, plot_data['RSI'], 30, where=(plot_data['RSI'] <= 30), facecolor='green', alpha=0.3)
     ax2.set_ylabel('Momentum')
@@ -386,6 +365,7 @@ def plot_professional_analysis(df, filename="chart.png"):
 
     for ax in [ax1, ax2, ax3]:
         ax.xaxis.set_major_formatter(myFmt)
+        ax.xaxis.set_major_locator(hour_locator) 
         ax.grid(True, linestyle='--', alpha=0.5)
 
     plt.tight_layout()
@@ -393,23 +373,62 @@ def plot_professional_analysis(df, filename="chart.png"):
     plt.close()
 
 # ------------------------------------------------------------------------------
-# 6. MODUL TELEGRAM PENGIRIMAN
+# 5B. VISUALISASI CHART ZOOM (6 JAM TERAKHIR + PREDIKSI MASA DEPAN)
 # ------------------------------------------------------------------------------
-def send_to_telegram(message, image_path):
-    print("[*] Mengirim laporan Godmode Pro Max ke Telegram...")
+def plot_zoomed_analysis(df, filename="chart_zoom.png"):
+    # Menarik 6 jam ke belakang (plus sedikit buffer untuk garis VWAP/MA agar terlihat)
+    plot_data = df.tail(8) 
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+
+    ax1.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=3)
+    ax1.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Harga Bandar (VWAP)', color='#ff7f0e', linestyle='-.', linewidth=2)
+    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15, label='Zona Bollinger')
+
+    if 'Garis_Prediksi' in plot_data.columns:
+        ax1.plot(plot_data.index, plot_data['Garis_Prediksi'], label='Riwayat Prediksi AI', color='red', linestyle='--', linewidth=2.5, alpha=0.8)
+        
+        last_time = plot_data.index[-1]
+        next_time = last_time + pd.Timedelta(hours=1)
+        next_pred = plot_data['AI_Target'].iloc[-1]
+        
+        ax1.scatter(next_time, next_pred, color='red', s=120, marker='o', zorder=10, label=f'Target AI Jam Depan: {format_rupiah(next_pred)}')
+        ax1.plot([last_time, next_time], [plot_data['Garis_Prediksi'].iloc[-1], next_pred], color='red', linestyle='--', linewidth=2.5)
+
+    ax1.set_title('🔍 ZOOM-IN 6 JAM TERAKHIR & PREDIKSI ARAH', fontsize=18, fontweight='bold', pad=15)
+    ax1.set_ylabel('Harga (IDR)')
+    ax1.legend(loc='upper left', framealpha=0.9, fontsize=11)
+    ax1.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
+    
+    # Jam untuk zoom chart tidak perlu tanggal panjang, cukup jamnya saja
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax1.grid(True, linestyle='--', alpha=0.6)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+
+# ------------------------------------------------------------------------------
+# 6. MODUL TELEGRAM PENGIRIMAN (DUA FOTO)
+# ------------------------------------------------------------------------------
+def send_to_telegram(message, image_paths):
+    print("[*] Mengirim teks laporan dan grafik ke Telegram...")
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("[!] Pengiriman dibatalkan. Token Telegram tidak disetel.")
         return
         
+    # Kirim Pesan Teks
     url_message = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload_msg = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
     requests.post(url_message, data=payload_msg)
 
+    # Kirim Semua Foto dalam list (Main Chart & Zoom Chart)
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-    with open(image_path, 'rb') as photo:
-        payload_photo = {'chat_id': TELEGRAM_CHAT_ID}
-        requests.post(url_photo, data=payload_photo, files={'photo': photo})
-    print("[*] Selesai!")
+    for path in image_paths:
+        with open(path, 'rb') as photo:
+            payload_photo = {'chat_id': TELEGRAM_CHAT_ID}
+            requests.post(url_photo, data=payload_photo, files={'photo': photo})
+    print("[*] Selesai Mengirim!")
 
 # ------------------------------------------------------------------------------
 # MAIN EXECUTION
@@ -441,11 +460,9 @@ def main():
     exposure = position_sizing_kelly(latest_prob, volatility)
     
     # 4. Evaluasi Performa
-    waktu_eksekusi = time.time() - start_time
     waktu_data_terakhir = df.index[-1]
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
-    selisih_detik = (sekarang_wita - waktu_data_terakhir).total_seconds()
-    selisih_menit = int(abs(selisih_detik) / 60)
+    selisih_menit = int(abs((sekarang_wita - waktu_data_terakhir).total_seconds()) / 60)
     
     if selisih_menit <= 20:
         info_server = f"⚡ Sangat Cepat (Data {selisih_menit}m lalu)"
@@ -457,35 +474,26 @@ def main():
     # Logika Evaluasi dengan Mesin Waktu AI yang Jujur
     prev_close = df['Close'].iloc[-2]
     
-    if past_prob > 0.5:
-        pred_arah_lalu = "NAIK"
-    else:
-        pred_arah_lalu = "TURUN"
+    if past_prob > 0.5: pred_arah_lalu = "NAIK"
+    else: pred_arah_lalu = "TURUN"
         
-    if latest_close > prev_close:
-        arah_asli = "Naik"
-    else:
-        arah_asli = "Turun"
+    if latest_close > prev_close: arah_asli = "Naik"
+    else: arah_asli = "Turun"
 
     if (past_prob > 0.5 and latest_close > prev_close) or (past_prob <= 0.5 and latest_close <= prev_close): 
         eval_msg = f"BENAR ✅ (Sejam lalu AI prediksi {pred_arah_lalu}, dan terbukti {arah_asli})"
     else: 
         eval_msg = f"SALAH ❌ (Sejam lalu AI prediksi {pred_arah_lalu}, tapi harga malah {arah_asli})"
 
-    # Logika Arah & Rekomendasi
     confidence = max(latest_prob, 1 - latest_prob) * 100
     if latest_prob >= 0.60:
-        arah = "NAIK KUAT 🚀"
-        rekomendasi = "🌟 MOMENTUM EMAS UNTUK BELI (STRONG BUY)"
+        arah, rekomendasi = "NAIK KUAT 🚀", "MOMENTUM EMAS UNTUK BELI (STRONG BUY)"
     elif latest_prob > 0.50:
-        arah = "Cenderung NAIK 📈"
-        rekomendasi = "📈 POTENSI NAIK, BOLEH BELI JIKA TREN KUAT (BUY)"
+        arah, rekomendasi = "Cenderung NAIK 📈", "POTENSI NAIK, BOLEH BELI JIKA TREN KUAT (BUY)"
     elif latest_prob <= 0.40:
-        arah = "TURUN KUAT 🚨"
-        rekomendasi = "🚨 BAHAYA! PASAR ANJLOK (STRONG SELL)"
+        arah, rekomendasi = "TURUN KUAT 🚨", "BAHAYA! PASAR ANJLOK (STRONG SELL)"
     else:
-        arah = "Cenderung TURUN 📉"
-        rekomendasi = "📉 POTENSI TURUN, LEBIH BAIK MENUNGGU (WAIT/SELL)"
+        arah, rekomendasi = "Cenderung TURUN 📉", "POTENSI TURUN, LEBIH BAIK MENUNGGU (WAIT/SELL)"
 
     # 5. Susun Pesan Telegram
     pesan = f"💎 *LAPORAN TRADING AI GODMODE* 💎\n"
@@ -519,18 +527,22 @@ def main():
     pesan += f"*{rekomendasi}*\n\n"
     
     if latest_prob > 0.5:
-        sl = var95  
-        tp = expected_24h 
-        pesan += f"💡 _Saran Trading: Pasang Cut Loss di dekat {format_rupiah(sl)} dan Jual Untung (TP) di kisaran {format_rupiah(tp)}._\n"
+        pesan += f"💡 _Saran Trading: Pasang Cut Loss di dekat {format_rupiah(var95)} dan Jual Untung (TP) di kisaran {format_rupiah(expected_24h)}._\n"
     else:
         pesan += f"💡 _Saran Trading: Lebih baik simpan aset/uang tunai dulu karena risiko penurunan sedang tinggi._\n"
         
     pesan += "\n_ℹ️ Disclaimer: Angka ini dihitung oleh algoritma AI. Gunakan sebagai alat bantu, bukan jaminan pasti 100%._"
 
     # 6. Eksekusi Chart & Kirim
-    chart_filename = "godmode_chart.png"
-    plot_professional_analysis(df, chart_filename)
-    send_to_telegram(pesan, chart_filename)
+    # Generate 2 Gambar
+    chart_main = "chart_main.png"
+    chart_zoom = "chart_zoom.png"
+    
+    plot_professional_analysis(df, chart_main)
+    plot_zoomed_analysis(df, chart_zoom)
+    
+    # Kirim ke Telegram (Akan Mengirimkan Pesan Teks lalu 2 Foto Berurutan)
+    send_to_telegram(pesan, [chart_main, chart_zoom])
 
 if __name__ == "__main__":
     main()
