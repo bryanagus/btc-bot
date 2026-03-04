@@ -171,7 +171,7 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     
     df["Return_1H"] = df["Close"].pct_change()
     df["Return_3H"] = df["Close"].pct_change(3)
-    df["Volatility"] = (df["High"] - df["Low"]).rolling(14).mean() / df["Close"]
+df["Volatility"] = df["Return_1H"].rolling(24).std()
     df["Trend_Slope"] = df["Close"].rolling(12).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)==12 else 0, raw=True)
     df["Momentum_Accel"] = df["Return_1H"].diff()
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
@@ -314,12 +314,13 @@ def monte_carlo_simulation(price, vol, steps=24, sims=2000):
     var95 = np.percentile(final_prices, 5) 
     return expected, var95
 
-def position_sizing_kelly(prob, current_price, expected_price, var95):
-    if expected_price <= current_price or prob < 0.5:
+# Gunakan ATR untuk menghitung target 1 jam (Risk 1 ATR, Reward 1.5 ATR)
+def position_sizing_kelly_fixed(prob, current_price, atr):
+    if prob < 0.5:
         return 0.0
         
-    reward = expected_price - current_price
-    risk = current_price - var95
+    reward = atr * 1.5 
+    risk = atr * 1.0
     
     if risk <= 0: return 0.0 
     
@@ -327,6 +328,7 @@ def position_sizing_kelly(prob, current_price, expected_price, var95):
     edge = prob - ((1 - prob) / r_ratio)
     kelly = max(edge, 0)
     
+    # Cap maksimal 25% dari modal
     size = min(kelly, 0.25) 
     return round(size * 100, 2)
 
@@ -483,7 +485,7 @@ def main():
     
     # 4. Quant / Risk Management (Kelly Diperbaiki)
     expected_24h_usd, var95_usd = monte_carlo_simulation(latest_close_usd, volatility)
-    exposure = position_sizing_kelly(latest_prob, latest_close_usd, expected_24h_usd, var95_usd)
+    exposure = position_sizing_kelly_fixed(latest_prob, latest_close_usd, df['ATR'].iloc[-1])
     
     expected_24h_idr = expected_24h_usd * kurs_idr
     var95_idr = var95_usd * kurs_idr
