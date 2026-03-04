@@ -23,7 +23,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Menginstal semua library sekaligus agar cepat, termasuk scikit-learn
-          pip install pandas numpy matplotlib yfinance pytz requests scikit-learn
+          pip install -r requirements.txt
 
       - name: Run Script
         run: python main.py
