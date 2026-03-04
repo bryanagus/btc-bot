@@ -41,4 +41,4 @@ jobs:
         with:
           commit_message: "🤖 Auto-update Jurnal Prediksi AI [skip ci]"
           file_pattern: 'ai_history_log.csv'
-          push_options: '--force' # Memaksa masuk jika branch terkunci
+          #push_options: '--force' # Memaksa masuk jika branch terkunci
