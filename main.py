@@ -52,7 +52,7 @@ def format_usd(angka):
     return f"${angka:,.0f}"
 
 # ------------------------------------------------------------------------------
-# 1. MODUL SENTIMEN BERITA (VADER + CRYPTO LEXICON)
+# 1. MODUL SENTIMEN BERITA (VADER + CRYPTO LEXICON + ANTI-CLOUDFLARE)
 # ------------------------------------------------------------------------------
 def fetch_crypto_news_sentiment():
     print("[*] Menganalisis berita Kripto dengan NLP (Crypto-Tuned)...")
@@ -72,25 +72,31 @@ def fetch_crypto_news_sentiment():
     compound_scores = []
     unique_news = set()
     
+    # [FIX] Meniru browser Chrome terbaru agar tidak diblokir Cloudflare
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    }
+    
     for url in rss_urls:
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            response = urllib.request.urlopen(req, timeout=5)
-            root = ET.fromstring(response.read())
-            
-            for item in root.findall('.//item')[:10]:
-                title = item.find('title').text
-                if not title: continue
-                
-                clean_title = re.sub(r'[^\w\s]', '', title.lower())
-                if clean_title not in unique_news:
-                    unique_news.add(clean_title)
-                    sentiment = analyzer.polarity_scores(title)
-                    compound_scores.append(sentiment['compound'])
-        except:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                root = ET.fromstring(response.content)
+                for item in root.findall('.//item')[:10]:
+                    title = item.find('title').text
+                    if not title: continue
+                    
+                    clean_title = re.sub(r'[^\w\s]', '', title.lower())
+                    if clean_title not in unique_news:
+                        unique_news.add(clean_title)
+                        sentiment = analyzer.polarity_scores(title)
+                        compound_scores.append(sentiment['compound'])
+        except Exception as e:
+            print(f"[-] Gagal mengambil berita dari {url}: {e}")
             continue
 
-    if not compound_scores: return "TIDAK ADA DATA BERITA ⚪"
+    if not compound_scores: return "TIDAK ADA DATA BERITA ⚪ (Sistem API Berita Diblokir)"
     avg_score = sum(compound_scores) / len(compound_scores)
     
     if avg_score >= 0.25: return f"SANGAT POSITIF 🚀 ({len(unique_news)} Berita)"
@@ -117,7 +123,8 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
         idr_data = yf.download('IDR=X', period='5d', progress=False)
         if isinstance(idr_data.columns, pd.MultiIndex): 
             idr_data.columns = idr_data.columns.droplevel(1)
-        kurs_idr = float(idr_data['Close'].iloc[-1])
+        # [FIX] Drop NaN agar saat weekend harga kurs tidak error
+        kurs_idr = float(idr_data['Close'].dropna().iloc[-1])
     except:
         kurs_idr = 16000.0
 
@@ -171,12 +178,19 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     
     df["Return_1H"] = df["Close"].pct_change()
     df["Return_3H"] = df["Close"].pct_change(3)
-df["Volatility"] = df["Return_1H"].rolling(24).std()
+    
+    # [FIX] Volatilitas kini menggunakan standar deviasi dari return per jam
+    df["Volatility"] = df["Return_1H"].rolling(24).std()
+    
     df["Trend_Slope"] = df["Close"].rolling(12).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)==12 else 0, raw=True)
     df["Momentum_Accel"] = df["Return_1H"].diff()
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
     
     df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
+    
+    # [FIX FATAL] Membuang 1 baris terakhir. Karena candle jam saat ini (live) belum utuh (masih berjalan).
+    # Jika tidak dibuang, data volume dan return setengah matang ini akan merusak otak AI.
+    df = df.iloc[:-1]
     
     features_cols = ["EMA_Spread","RSI","MACD_Hist","Return_1H","Return_3H",
                      "Volatility","Trend_Slope","Momentum_Accel","Regime"]
@@ -189,18 +203,14 @@ df["Volatility"] = df["Return_1H"].rolling(24).std()
 def train_and_predict_honest(df, features):
     print("[*] Melatih AI Ensemble (Zero Leakage Pipeline)...")
     
-    # [BUG FIXED] Membuang 2 baris terakhir. Karena target baris -2 bergantung pada
-    # baris -1 (yang merupakan candle live). Ini memastikan 100% Zero Data Leakage.
-    train_df = df.iloc[:-2].dropna(subset=features + ["Target"])
+    # Karena baris terakhir sudah pasti candle yg fully-closed (dari fix sebelumnya),
+    # kita tidak bisa melatih targetnya karena targetnya (-1) adalah masa depan yg blm terjadi.
+    train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
     X_train = train_df[features].values
     y_train = train_df["Target"].values
     
-    # Data prediksi tetap mengambil candle terbaru (live)
+    # Data prediksi mengambil candle TERAKHIR YANG SUDAH FULLY CLOSED (utuh)
     X_live = df[features].iloc[-1:].fillna(0).values
-
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_live_scaled = scaler.transform(X_live)
 
     lr = LogisticRegression()
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
@@ -209,23 +219,33 @@ def train_and_predict_honest(df, features):
     tscv = TimeSeriesSplit(n_splits=5)
     cv_scores = []
     
-    for train_index, test_index in tscv.split(X_train_scaled):
-        X_tr, X_te = X_train_scaled[train_index], X_train_scaled[test_index]
+    # [FIX FATAL] Data Leakage ditutup: Proses Scaling dipindah ke DALAM loop CV
+    for train_index, test_index in tscv.split(X_train):
+        X_tr, X_te = X_train[train_index], X_train[test_index]
         y_tr, y_te = y_train[train_index], y_train[test_index]
         
-        lr.fit(X_tr, y_tr)
-        rf.fit(X_tr, y_tr)
-        gb.fit(X_tr, y_tr)
+        fold_scaler = StandardScaler()
+        X_tr_scaled = fold_scaler.fit_transform(X_tr)
+        X_te_scaled = fold_scaler.transform(X_te)
         
-        p_lr = lr.predict_proba(X_te)[:, 1]
-        p_rf = rf.predict_proba(X_te)[:, 1]
-        p_gb = gb.predict_proba(X_te)[:, 1]
+        lr.fit(X_tr_scaled, y_tr)
+        rf.fit(X_tr_scaled, y_tr)
+        gb.fit(X_tr_scaled, y_tr)
+        
+        p_lr = lr.predict_proba(X_te_scaled)[:, 1]
+        p_rf = rf.predict_proba(X_te_scaled)[:, 1]
+        p_gb = gb.predict_proba(X_te_scaled)[:, 1]
         
         ensemble_cv_prob = (p_lr + p_rf + p_gb) / 3
         fold_acc = accuracy_score(y_te, (ensemble_cv_prob > 0.5).astype(int))
         cv_scores.append(fold_acc)
         
     accuracy = np.mean(cv_scores) * 100
+
+    # Latih model final menggunakan SEMUA data yang sudah di-scale
+    final_scaler = StandardScaler()
+    X_train_scaled = final_scaler.fit_transform(X_train)
+    X_live_scaled = final_scaler.transform(X_live)
 
     lr_cal = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
     lr_cal.fit(X_train_scaled, y_train)
@@ -296,7 +316,7 @@ def save_and_load_predictions(df, latest_prob):
     return df, predicted_target, next_hour, eval_msg
 
 # ------------------------------------------------------------------------------
-# 4. MODUL MONTE CARLO & DYNAMIC KELLY CRITERION (FIXED MATH)
+# 4. MODUL MONTE CARLO (UNTUK SL/TP) & KELLY CRITERION (UNTUK SIZING 1 JAM)
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=24, sims=2000):
     paths = []
@@ -314,13 +334,13 @@ def monte_carlo_simulation(price, vol, steps=24, sims=2000):
     var95 = np.percentile(final_prices, 5) 
     return expected, var95
 
-# Gunakan ATR untuk menghitung target 1 jam (Risk 1 ATR, Reward 1.5 ATR)
-def position_sizing_kelly_fixed(prob, current_price, atr):
+# [FIX] Kelly Criterion kini murni berbasis ATR timeframe 1 jam agar tidak bentrok
+def position_sizing_kelly_fixed(prob, atr):
     if prob < 0.5:
         return 0.0
         
-    reward = atr * 1.5 
-    risk = atr * 1.0
+    reward = atr * 1.5 # Estimasi take profit 1.5 ATR
+    risk = atr * 1.0   # Estimasi stop loss 1.0 ATR
     
     if risk <= 0: return 0.0 
     
@@ -328,8 +348,7 @@ def position_sizing_kelly_fixed(prob, current_price, atr):
     edge = prob - ((1 - prob) / r_ratio)
     kelly = max(edge, 0)
     
-    # Cap maksimal 25% dari modal
-    size = min(kelly, 0.25) 
+    size = min(kelly, 0.25) # Cap max 25% modal per posisi
     return round(size * 100, 2)
 
 # ------------------------------------------------------------------------------
@@ -445,7 +464,7 @@ def plot_zoomed_analysis(df, next_time, next_pred, filename="chart_zoom.png"):
     plt.close()
 
 # ------------------------------------------------------------------------------
-# 6. MODUL TELEGRAM 
+# 6. MODUL TELEGRAM (ANTI-CRASH GAMBAR)
 # ------------------------------------------------------------------------------
 def send_to_telegram(message, image_paths):
     print("[*] Mengirim laporan ke Telegram...")
@@ -453,13 +472,21 @@ def send_to_telegram(message, image_paths):
         print("[!] Pengiriman dibatalkan. Token Telegram belum disetel.")
         return
         
+    # Kirim Pesan Teks Dulu (Lebih Stabil)
     url_message = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     requests.post(url_message, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'})
 
+    # Kirim Gambar dengan Try-Except
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     for path in image_paths:
-        with open(path, 'rb') as photo:
-            requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
+        if os.path.exists(path):
+            try:
+                with open(path, 'rb') as photo:
+                    requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
+            except Exception as e:
+                print(f"[!] Gagal mengirim gambar {path}: {e}")
+        else:
+            print(f"[!] Gambar {path} tidak ditemukan, bot hanya mengirim teks.")
     print("[*] Selesai Mengirim!")
 
 # ------------------------------------------------------------------------------
@@ -476,17 +503,19 @@ def main():
     news_status = fetch_crypto_news_sentiment()
     latest_close_usd = df['Close'].iloc[-1]
     volatility = df["Volatility"].iloc[-1]
+    current_atr = df["ATR"].iloc[-1]
     
-    # 2. AI Machine Learning (JUJUR)
+    # 2. AI Machine Learning (JUJUR - Zero Data Leakage)
     latest_prob, ml_accuracy = train_and_predict_honest(df, features)
     
     # 3. Database Historis Anti-Repainting
     df, next_target_usd, next_time, eval_msg = save_and_load_predictions(df, latest_prob)
     
-    # 4. Quant / Risk Management (Kelly Diperbaiki)
-    expected_24h_usd, var95_usd = monte_carlo_simulation(latest_close_usd, volatility)
-    exposure = position_sizing_kelly_fixed(latest_prob, latest_close_usd, df['ATR'].iloc[-1])
+    # 4. Quant / Risk Management (Kelly Diperbaiki ke 1 Jam)
+    exposure = position_sizing_kelly_fixed(latest_prob, current_atr)
     
+    # Monte carlo murni dipakai sebagai patokan TP / SL harian (24H)
+    expected_24h_usd, var95_usd = monte_carlo_simulation(latest_close_usd, volatility)
     expected_24h_idr = expected_24h_usd * kurs_idr
     var95_idr = var95_usd * kurs_idr
     
@@ -501,32 +530,29 @@ def main():
     elif latest_prob <= 0.40: arah, rekomendasi = "TURUN KUAT 🚨", "BAHAYA! PASAR ANJLOK (STRONG SELL)"
     else: arah, rekomendasi = "Cenderung TURUN 📉", "POTENSI TURUN, LEBIH BAIK MENUNGGU (WAIT/SELL)"
 
+    # [FIX] Minimum Indodax Logic
     if exposure == 0:
-        rekomendasi = "TUNGGU (WAIT) - Risiko terlalu tinggi atau tren menurun menurut sistem matematika."
-        saran_trading = "Lebih baik simpan aset/uang tunai dulu karena risiko penurunan sedang tinggi."
-    elif latest_prob >= 0.60:
-        saran_trading = "Momentum sangat bagus, pertimbangkan untuk masuk dengan alokasi modal maksimal yang disarankan."
-    elif latest_prob > 0.50:
-        saran_trading = "Pasar terlihat positif, pertimbangkan untuk masuk secara bertahap sesuai alokasi modal."
+        rekomendasi = "TUNGGU (WAIT) - Risiko terlalu tinggi atau tren menurun."
+        saran_trading = "Lebih baik simpan saldo IDR dulu karena risiko pasar sedang tinggi."
     else:
-        saran_trading = "Tetap waspada, pantau pergerakan pasar sebelum mengambil keputusan besar."
+        saran_trading = f"Pasar mendukung. Rekomendasi Alokasi Modal: {exposure}%. (Pastikan jumlahnya di atas batas minimum Indodax Rp10.000)."
 
     # Kalkulasi Status Sistem & Pasar
     waktu_candle = waktu_data_terakhir.strftime('%H:%M WITA')
     selisih_menit = int((sekarang_wita - waktu_data_terakhir).total_seconds() / 60)
-    status_sinkronisasi = f"⚡ Sangat Cepat (Data {selisih_menit}m lalu)" if selisih_menit <= 15 else f"⏳ Normal (Data {selisih_menit}m lalu)"
+    status_sinkronisasi = f"⚡ Cepat (Data {selisih_menit}m lalu)" if selisih_menit <= 15 else f"⏳ Normal (Data {selisih_menit}m lalu)"
     
-    vwap_status = "Aman (Harga di atas rata-rata tarikan bandar)" if latest_close_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah rata-rata tarikan bandar)"
-    tren_status = "Kuat (Pasar sedang aktif bergerak)" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways (Pasar ragu-ragu)"
+    vwap_status = "Aman (Harga di atas tarikan bandar)" if latest_close_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah tarikan bandar)"
+    tren_status = "Kuat (Pasar aktif)" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways (Pasar ragu)"
 
-    # 6. Susun Pesan Telegram (KOMBINASI FORMAT BARU & LAMA)
+    # 6. Susun Pesan Telegram
     pesan = f"💎 *LAPORAN TRADING AI GODMODE (ANTI-REPAINT)* 💎\n"
     pesan += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
     
     pesan += f"⚙️ *Kondisi Server & Sistem:*\n"
     pesan += f"├ Sinkronisasi: {status_sinkronisasi}\n"
-    pesan += f"├ Waktu Candle: {waktu_candle}\n"
-    pesan += f"└ Beban Engine AI: {waktu_eksekusi:.1f} detik\n\n"
+    pesan += f"├ Waktu Candle Utuh: {waktu_candle}\n"
+    pesan += f"└ Beban Mesin AI: {waktu_eksekusi:.1f} detik\n\n"
     
     pesan += f"💰 *Harga BTC Sekarang:* {format_rupiah(indodax_live_idr)}\n\n"
     
@@ -534,18 +560,16 @@ def main():
     pesan += f"_(Otak utama yang menebak arah tren pasar)_\n"
     pesan += f"├ Arah Harga: *{arah}*\n"
     pesan += f"├ Keyakinan AI: *{confidence:.1f}%* (Makin tinggi makin akurat)\n"
-    pesan += f"├ Akurasi AI: *{ml_accuracy:.1f}%* (Tanpa Data Leakage)\n"
+    pesan += f"├ Akurasi AI (No Leakage): *{ml_accuracy:.1f}%*\n"
     pesan += f"└ Cek Sejam Lalu: {eval_msg}\n\n"
     
     pesan += f"🔮 *SIMULASI HARGA 24 JAM (MONTE CARLO):*\n"
     pesan += f"_(AI mensimulasikan ribuan skenario untuk menebak harga besok)_\n"
-    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h_idr)} (Target rata-rata wajar)\n"
-    pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95_idr)}\n"
-    pesan += f"   ↳ _Penjelasan: Sangat cocok dijadikan titik Stop Loss (SL)._\n\n"
+    pesan += f"├ Harga Harapan: {format_rupiah(expected_24h_idr)} (Target TP Harian)\n"
+    pesan += f"└ Batas Apes (VaR 95%): {format_rupiah(var95_idr)} (Target SL Harian)\n\n"
     
-    pesan += f"📊 *SARAN MANAJEMEN MODAL & PASAR:*\n"
-    pesan += f"_(Panduan agar saldo Indodax tetap aman)_\n"
-    pesan += f"├ Alokasi Modal Aman: Gunakan maksimal *{exposure}%* dari total saldomu.\n"
+    pesan += f"📊 *SARAN MANAJEMEN MODAL (KELLY):*\n"
+    pesan += f"├ Rekomendasi Saldo: Gunakan *{exposure}%* dari total saldomu.\n"
     pesan += f"├ Tren Saat Ini (ADX): {tren_status}\n"
     pesan += f"└ Posisi Bandar (VWAP): {vwap_status}\n\n"
     
@@ -555,16 +579,19 @@ def main():
     pesan += f"*{rekomendasi}*\n\n"
     
     pesan += f"💡 *Saran Trading:* {saran_trading}\n"
-    pesan += f"🎯 _(Opsional) Pasang Cut Loss di {format_rupiah(var95_idr)} dan Take Profit di {format_rupiah(expected_24h_idr)}._\n\n"
-    pesan += f"ℹ️ _Note: Khusus di foto Grafik menggunakan format Dolar (USD) agar bentuk grafiknya stabil._"
+    pesan += f"ℹ️ _Note: Khusus di foto Grafik menggunakan format Dolar (USD) agar bentuk grafiknya presisi._"
 
     # 7. Eksekusi Chart & Kirim
     chart_main = "chart_main.png"
     chart_zoom = "chart_zoom.png"
     
-    plot_professional_analysis(df, next_time, next_target_usd, chart_main)
-    plot_zoomed_analysis(df, next_time, next_target_usd, chart_zoom)
-    
+    # Bungkus pembuatan plot dengan Try agar kalau RAM server habis/error, bot tdk mati
+    try:
+        plot_professional_analysis(df, next_time, next_target_usd, chart_main)
+        plot_zoomed_analysis(df, next_time, next_target_usd, chart_zoom)
+    except Exception as e:
+        print(f"[!] Gagal membuat grafik: {e}")
+        
     send_to_telegram(pesan, [chart_main, chart_zoom])
 
 if __name__ == "__main__":
