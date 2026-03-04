@@ -7,6 +7,9 @@ on:
     #- cron: '13 * * * *' 
   workflow_dispatch: # Memungkinkan kamu menjalankan bot secara manual dari tombol "Run workflow"
 
+permissions:
+  contents: write # PENTING: Memberikan izin agar bot bisa menyimpan file CSV ke repo
+  
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,13 +25,29 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Menginstal semua library sekaligus agar cepat, termasuk scikit-learn vaderSentiment
-          # pip install pandas numpy matplotlib yfinance pytz requests scikit-learn vaderSentiment
           pip install -r requirements.txt
           
       - name: Run Script
         run: python main.py
         env:
-          # Mengambil token dari GitHub Secrets agar aman dan tidak terekspos di public code
+          # Mengambil token dari GitHub Secrets
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # ==============================================================
+      # BAGIAN WAJIB UNTUK SISTEM ANTI-REPAINTING (CSV LOGGING)
+      # ==============================================================
+      - name: Commit and Push History CSV
+        run: |
+          # Mengatur identitas bot GitHub untuk melakukan commit
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # Mendaftarkan file CSV (jurnal prediksi) untuk disimpan
+          git add ai_history_log.csv
+          
+          # Mengecek apakah ada perubahan. Jika ada, simpan dan push ke repository.
+          # Tag [skip ci] ditambahkan agar commit ini tidak memicu workflow ini berjalan berulang-ulang tanpa henti (infinite loop).
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update Jurnal Prediksi AI [skip ci]" && git push)
+
+
