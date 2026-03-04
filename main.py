@@ -81,10 +81,15 @@ def fetch_crypto_news_sentiment():
             continue
 
     selisih = bullish_score - bearish_score
-    if selisih >= 3: return f"SANGAT POSITIF 🚀 ({len(unique_news)} Berita)"
-    elif selisih > 0: return f"POSITIF RINGAN 🟢 ({len(unique_news)} Berita)"
-    elif selisih <= -3: return f"SANGAT NEGATIF 🚨 ({len(unique_news)} Berita)"
-    elif selisih < 0: return f"NEGATIF RINGAN 🔴 ({len(unique_news)} Berita)"
+    if selisih >= 3: 
+        return f"SANGAT POSITIF 🚀 ({len(unique_news)} Berita)"
+    elif selisih > 0: 
+        return f"POSITIF RINGAN 🟢 ({len(unique_news)} Berita)"
+    elif selisih <= -3: 
+        return f"SANGAT NEGATIF 🚨 ({len(unique_news)} Berita)"
+    elif selisih < 0: 
+        return f"NEGATIF RINGAN 🔴 ({len(unique_news)} Berita)"
+    
     return f"NETRAL/SEIMBANG ⚪ ({len(unique_news)} Berita)"
 
 # ------------------------------------------------------------------------------
@@ -161,8 +166,11 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     
     # Hindari error polyfit dengan apply yang aman
     def calc_slope(x):
-        try: return np.polyfit(range(len(x)), x, 1)[0]
-        except: return 0
+        try: 
+            return np.polyfit(range(len(x)), x, 1)[0]
+        except: 
+            return 0
+            
     df["Trend_Slope"] = df["Close"].rolling(12).apply(calc_slope, raw=True)
     df["Momentum_Accel"] = df["Return_1H"].diff()
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
@@ -178,14 +186,15 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
 
 # ------------------------------------------------------------------------------
 # 3. MODUL ENSEMBLE MACHINE LEARNING & CALIBRATION (GODMODE)
+#    (BAGIAN INI TELAH DIPERBAIKI LOGIKANYA AGAR AKURASI TIDAK OVERFIT/100%)
 # ------------------------------------------------------------------------------
 def train_and_predict(df, features):
     print("[*] Melatih AI Ensemble (RandomForest, GradientBoosting, LogisticReg)...")
     
     # Pisahkan data training (semua kecuali baris terakhir) dan data terkini (baris terakhir)
     train_df = df.iloc[:-1].dropna(subset=features + ["Target"])
-    X_train = train_df[features]
-    y_train = train_df["Target"]
+    X_train = train_df[features].values
+    y_train = train_df["Target"].values
     
     latest_features = df[features].iloc[-1:]
     
@@ -199,31 +208,54 @@ def train_and_predict(df, features):
     gb = GradientBoostingClassifier(random_state=42)
 
     # Train dengan TimeSeriesSplit untuk akurasi yang jujur (tanpa look-ahead bias)
-    tscv = TimeSeriesSplit(n_splits=3)
+    tscv = TimeSeriesSplit(n_splits=5)
+    
+    # =========================================================================
+    # PERBAIKAN: MENGHITUNG AKURASI DENGAN CROSS-VALIDATION
+    # Ini akan mencegah AI memberikan nilai 100% dari data yang sudah dihafal
+    # =========================================================================
+    cv_scores = []
+    for train_index, test_index in tscv.split(X_scaled):
+        X_tr, X_te = X_scaled[train_index], X_scaled[test_index]
+        y_tr, y_te = y_train[train_index], y_train[test_index]
+        
+        # Train model khusus untuk fold ini
+        lr.fit(X_tr, y_tr)
+        rf.fit(X_tr, y_tr)
+        gb.fit(X_tr, y_tr)
+        
+        # Prediksi probabilitas pada data yang belum pernah dilihat model
+        prob_lr_cv = lr.predict_proba(X_te)[:, 1]
+        prob_rf_cv = rf.predict_proba(X_te)[:, 1]
+        prob_gb_cv = gb.predict_proba(X_te)[:, 1]
+        
+        ensemble_cv_prob = (prob_lr_cv + prob_rf_cv + prob_gb_cv) / 3
+        fold_accuracy = accuracy_score(y_te, (ensemble_cv_prob > 0.5).astype(int))
+        cv_scores.append(fold_accuracy)
+        
+    # Akurasi nyata adalah rata-rata dari seluruh pengujian silang
+    accuracy = np.mean(cv_scores) * 100
+    # =========================================================================
     
     # Kalibrasi Logistic Regression agar probabilitasnya akurat
-    lr_calibrated = CalibratedClassifierCV(lr, method="sigmoid", cv=tscv)
+    lr_calibrated = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
     
-    # Fit semua model
+    # Fit ulang semua model dengan SELURUH data training untuk prediksi masa depan
     lr_calibrated.fit(X_scaled, y_train)
     rf.fit(X_scaled, y_train)
     gb.fit(X_scaled, y_train)
 
-    # Hitung Akurasi Training
-    prob_lr_train = lr_calibrated.predict_proba(X_scaled)[:,1]
-    prob_rf_train = rf.predict_proba(X_scaled)[:,1]
-    prob_gb_train = gb.predict_proba(X_scaled)[:,1]
-    ensemble_train_prob = (prob_lr_train + prob_rf_train + prob_gb_train) / 3
-    accuracy = accuracy_score(y_train, (ensemble_train_prob > 0.5).astype(int)) * 100
-
-    # Prediksi Data Terkini
+    # Prediksi Data Terkini (Untuk Sinyal Buy/Sell saat ini)
     prob_lr = lr_calibrated.predict_proba(X_latest_scaled)[0,1]
     prob_rf = rf.predict_proba(X_latest_scaled)[0,1]
     prob_gb = gb.predict_proba(X_latest_scaled)[0,1]
     latest_prob = (prob_lr + prob_rf + prob_gb) / 3
     
     # Untuk evaluasi evaluasi_sebelumnya
-    past_prob = ensemble_train_prob[-1] if len(ensemble_train_prob) > 0 else 0.5
+    prob_lr_past = lr_calibrated.predict_proba(X_scaled)[-1,1]
+    prob_rf_past = rf.predict_proba(X_scaled)[-1,1]
+    prob_gb_past = gb.predict_proba(X_scaled)[-1,1]
+    past_prob = (prob_lr_past + prob_rf_past + prob_gb_past) / 3
 
     return latest_prob, accuracy, past_prob
 
@@ -374,9 +406,12 @@ def main():
     
     # Evaluasi Prediksi Jam Lalu
     prev_close = df['Close'].iloc[-2]
-    if past_prob > 0.5 and latest_close > prev_close: eval_msg = "BENAR ✅ (Harga Naik)"
-    elif past_prob < 0.5 and latest_close < prev_close: eval_msg = "BENAR ✅ (Berhasil Hindari Minus)"
-    else: eval_msg = "SALAH ❌ (Pasar bergerak tak terduga)"
+    if past_prob > 0.5 and latest_close > prev_close: 
+        eval_msg = "BENAR ✅ (Harga Naik)"
+    elif past_prob < 0.5 and latest_close < prev_close: 
+        eval_msg = "BENAR ✅ (Berhasil Hindari Minus)"
+    else: 
+        eval_msg = "SALAH ❌ (Pasar bergerak tak terduga)"
 
     # Logika Arah & Rekomendasi
     confidence = max(latest_prob, 1 - latest_prob) * 100
