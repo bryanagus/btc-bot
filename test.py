@@ -1,7 +1,9 @@
 # ==============================================================================
-# BTC QUANT GODMODE PRO MAX - TAHAP 1 (WEB3 CORE ENGINE)
-# Fitur Baru: Evaluasi Murni Berbasis Indodax IDR (Single Source of Truth)
-# Fitur Baru: Auto-Generate dashboard_data.json untuk Web Frontend
+# BTC QUANT GODMODE PRO MAX - TAHAP 1 (WEB3 CORE ENGINE FULL VERSION)
+# Fitur: Fast Backoff Retry, Auto-Risk, System Diagnostics, Zero Data Leakage
+# Indikator Full: ADX, MACD, Trend Slope, Momentum, Regime, VWAP, Bollinger
+# Visual: 3 Grafik Lengkap (Main, Zoom, Dashboard Indikator)
+# Web3 Ready: Evaluasi Murni Indodax IDR & Auto-Generate dashboard_data.json
 # ==============================================================================
 import pandas as pd
 import numpy as np
@@ -14,6 +16,7 @@ import requests
 import os
 import warnings
 import xml.etree.ElementTree as ET
+import re
 import time
 import csv
 import json
@@ -35,16 +38,17 @@ pd.options.mode.chained_assignment = None
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 HISTORY_FILE = "ai_history_log.csv" 
-WEB_DATA_FILE = "dashboard_data.json" # File baru untuk Web3
+WEB_DATA_FILE = "dashboard_data.json" # File Database untuk Web3
 # ===============================================
 
+# Global Diagnostics Dictionary
 diagnostics = {
     "api": "✅ Normal (API Terhubung)",
     "csv": "✅ Sinkron (Riwayat Terbaca)",
     "ai_1h": "✅ Optimal",
     "ai_6h": "✅ Optimal",
     "chart": "✅ Optimal (3 Grafik Tercetak)",
-    "web3": "✅ File JSON Terupdate"
+    "web3": "✅ JSON Terupdate"
 }
 
 def format_rupiah(angka):
@@ -56,7 +60,7 @@ def format_usd(angka):
     return f"${angka:,.0f}"
 
 # ------------------------------------------------------------------------------
-# 1. FETCH DATA DENGAN FAST BACKOFF
+# 1. MODUL FETCH DATA & NEWS
 # ------------------------------------------------------------------------------
 def fetch_data_with_retry(period='90d', interval='1h'):
     print("[*] Mencoba menarik data dengan Fast Backoff...")
@@ -102,7 +106,8 @@ def fetch_crypto_news_sentiment():
                 root = ET.fromstring(response.content)
                 for item in root.findall('.//item')[:10]:
                     title = item.find('title').text
-                    if title: compound_scores.append(analyzer.polarity_scores(title)['compound'])
+                    if title:
+                        compound_scores.append(analyzer.polarity_scores(title)['compound'])
                         
         if not compound_scores: return "NETRAL ⚪"
         avg = sum(compound_scores) / len(compound_scores)
@@ -113,10 +118,11 @@ def fetch_crypto_news_sentiment():
         return "BERITA TIDAK TERSEDIA ⚪"
 
 # ------------------------------------------------------------------------------
-# 2. FEATURE ENGINEERING
+# 2. FEATURE ENGINEERING (FULL INDICATORS)
 # ------------------------------------------------------------------------------
 def engineer_features(df):
     df['MA_50'] = df['Close'].rolling(window=50).mean()
+    df['MA_200'] = df['Close'].rolling(window=200).mean()
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
     std_20 = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Middle'] + (std_20 * 2.0)
@@ -167,7 +173,7 @@ def engineer_features(df):
     return df, features_cols
 
 # ------------------------------------------------------------------------------
-# 3. MODUL AI JUJUR
+# 3. MODUL AI JUJUR (DUAL TARGET)
 # ------------------------------------------------------------------------------
 def train_honest_model(df, features, target_col, shift_len):
     train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
@@ -195,11 +201,10 @@ def train_honest_model(df, features, target_col, shift_len):
     return (prob_lr + prob_rf + prob_gb) / 3
 
 # ------------------------------------------------------------------------------
-# 4. DATABASE CSV & EVALUASI MURNI INDODAX (CORE FIX)
+# 4. DATABASE CSV & EVALUASI MURNI INDODAX (CORE FIX WEB3)
 # ------------------------------------------------------------------------------
 def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
     current_time = df.index[-1]
-    
     target_time_1h = current_time + pd.Timedelta(hours=1)
     target_time_6h = current_time + pd.Timedelta(hours=6)
     
@@ -209,13 +214,13 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
     
     file_exists = os.path.isfile(HISTORY_FILE)
     
-    # FORMAT BARU: MENYIMPAN HARGA INDODAX SAAT PREDIKSI DIBUAT
+    # SYSTEM SAPU BERSIH: Hapus CSV lama jika formatnya salah (Bukan Web3 Format)
     if file_exists:
         try:
             with open(HISTORY_FILE, 'r') as f:
                 header = f.readline()
             if 'indodax_start_price' not in header:
-                print("[!] Upgrade CSV ke versi Indodax-only...")
+                print("[!] Format CSV lama terdeteksi. Mereset untuk Web3...")
                 os.remove(HISTORY_FILE)
                 file_exists = False
         except: pass
@@ -226,7 +231,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
             history['timestamp_target_1h'] = pd.to_datetime(history['timestamp_target_1h'], utc=True).dt.tz_convert('Asia/Makassar')
             history['timestamp_target_6h'] = pd.to_datetime(history['timestamp_target_6h'], utc=True).dt.tz_convert('Asia/Makassar')
             
-            # --- EVALUASI 1 JAM (MURNI INDODAX) ---
+            # --- EVALUASI 1 JAM (MURNI INDODAX IDR) ---
             row_1h = history[history['timestamp_target_1h'] == current_time]
             if not row_1h.empty:
                 past_prob = row_1h['prob_1h'].values[0]
@@ -239,11 +244,10 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
                 else:
                     eval_1h_msg = f"SALAH ❌ (Nebak {arah_pred}, Asli {arah_asli})"
                     
-                # Simpan hasil untuk Web3
                 history.loc[history['timestamp_target_1h'] == current_time, 'result_1h'] = eval_1h_msg
                 history.loc[history['timestamp_target_1h'] == current_time, 'indodax_end_price_1h'] = indodax_live_idr
 
-            # --- EVALUASI 6 JAM (MURNI INDODAX) ---
+            # --- EVALUASI 6 JAM (MURNI INDODAX IDR) ---
             row_6h = history[history['timestamp_target_6h'] == current_time]
             if not row_6h.empty:
                 past_prob = row_6h['prob_6h'].values[0]
@@ -252,9 +256,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
                 arah_asli = "Naik" if indodax_live_idr > past_idr_price else "Turun"
                 
                 if (past_prob > 0.5 and indodax_live_idr > past_idr_price) or (past_prob <= 0.5 and indodax_live_idr <= past_idr_price):
-                    eval_6h_msg = f"BENAR ✅ (Nebak {arah_pred}, Asli {arah_asli})"
+                    eval_6h_msg = f"BENAR ✅ (Nebak {arah_pred})"
                 else:
-                    eval_6h_msg = f"SALAH ❌ (Nebak {arah_pred}, Asli {arah_asli})"
+                    eval_6h_msg = f"SALAH ❌ (Nebak {arah_pred})"
                     
                 history.loc[history['timestamp_target_6h'] == current_time, 'result_6h'] = eval_6h_msg
                 history.loc[history['timestamp_target_6h'] == current_time, 'indodax_end_price_6h'] = indodax_live_idr
@@ -274,7 +278,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
         diagnostics["csv"] = f"❌ Error Baca CSV ({str(e)[:20]})"
         risk_multiplier = 1.0
 
-    # SIMPAN PREDIKSI BARU
+    # SIMPAN PREDIKSI BARU KE DALAM CSV
     try:
         with open(HISTORY_FILE, mode='a', newline='') as file:
             writer = csv.writer(file)
@@ -287,7 +291,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
     return eval_1h_msg, eval_6h_msg, risk_multiplier
 
 # ------------------------------------------------------------------------------
-# 5. GENERATE DATA UNTUK WEB3 (JSON)
+# 5. GENERATE DATA UNTUK WEB3 FRONTEND (JSON)
 # ------------------------------------------------------------------------------
 def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr, risk_mult, df):
     try:
@@ -295,7 +299,7 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
         
         history = pd.read_csv(HISTORY_FILE)
         
-        # Ambil 100 riwayat terakhir yang sudah dievaluasi untuk 1H
+        # Ekstrak Riwayat 1 Jam (Maksimal 100 terakhir)
         hist_1h = history.dropna(subset=['result_1h']).tail(100)
         table_1h = []
         for _, row in hist_1h.iterrows():
@@ -306,10 +310,10 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
                 "harga_akhir": row['indodax_end_price_1h'],
                 "prediksi": "NAIK" if row['prob_1h'] > 0.5 else "TURUN",
                 "keyakinan": f"{row['prob_1h']*100:.1f}%",
-                "status": row['result_1h'].split(' ')[0] # Ambil kata "BENAR" atau "SALAH"
+                "status": row['result_1h'].split(' ')[0] # Ambil kata BENAR/SALAH saja
             })
             
-        # Ambil 100 riwayat terakhir yang sudah dievaluasi untuk 6H
+        # Ekstrak Riwayat 6 Jam (Maksimal 100 terakhir)
         hist_6h = history.dropna(subset=['result_6h']).tail(100)
         table_6h = []
         for _, row in hist_6h.iterrows():
@@ -323,7 +327,6 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
                 "status": row['result_6h'].split(' ')[0]
             })
 
-        # Hitung Win Rate Global
         total_benar_1h = len([x for x in table_1h if "BENAR" in x['status']])
         total_benar_6h = len([x for x in table_6h if "BENAR" in x['status']])
         win_rate_1h = round((total_benar_1h / len(table_1h) * 100) if table_1h else 0, 1)
@@ -348,7 +351,7 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
                 "adx": round(df['ADX'].iloc[-1], 2),
                 "trend": "NAIK" if df['EMA20'].iloc[-1] > df['EMA50'].iloc[-1] else "TURUN"
             },
-            "history_1h": table_1h[::-1], # Reverse agar yang terbaru di atas
+            "history_1h": table_1h[::-1], # Urutan dari yang paling baru
             "history_6h": table_6h[::-1]
         }
 
@@ -359,7 +362,7 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
         diagnostics["web3"] = f"❌ Gagal Export JSON ({str(e)[:20]})"
 
 # ------------------------------------------------------------------------------
-# 6. RISK & VISUALS (Disingkat untuk keterbacaan)
+# 6. RISK MANAGEMENT & VISUALIZATION (FULL 3 CHARTS)
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=1, sims=2000):
     paths = []
@@ -379,22 +382,113 @@ def position_sizing_kelly(prob_1h, prob_6h, atr, risk_multiplier):
     size = min(max(edge, 0), 0.25) * risk_multiplier 
     return round(size * 100, 2)
 
-def plot_professional_analysis(df, prob_1h, prob_6h, filename="chart_main.png"):
-    # (Plot sederhana untuk menghemat CPU di Tahap 1, Anda bebas pakai plot lama)
+def plot_professional_analysis(df, prob_1h, prob_6h, atr, filename="chart_main.png"):
     plot_data = df.tail(80) 
     plt.style.use('seaborn-v0_8-darkgrid')
     fig = plt.figure(figsize=(14, 8))
-    plt.plot(plot_data.index, plot_data['Close'], color='black', linewidth=2)
-    plt.plot(plot_data.index, plot_data['VWAP_24'], color='#ff7f0e', linestyle='-.')
-    plt.title('GRAFIK UTAMA AI DUAL ENGINE', fontsize=16, fontweight='bold')
+    
+    plt.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=2, zorder=5)
+    plt.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Bandar (VWAP)', color='#ff7f0e', linestyle='-.')
+    
+    last_time = plot_data.index[-1]
+    last_price = plot_data['Close'].iloc[-1]
+    
+    t_1h = last_time + pd.Timedelta(hours=1)
+    p_1h = last_price + (atr * (prob_1h - 0.5) * 2)
+    t_6h = last_time + pd.Timedelta(hours=6)
+    p_6h = last_price + (atr * (prob_6h - 0.5) * 4)
+
+    plt.scatter(t_1h, p_1h, color='blue', s=80, marker='o', zorder=10, label='Target 1 Jam')
+    plt.plot([last_time, t_1h], [last_price, p_1h], color='blue', linestyle='--', linewidth=2)
+    plt.scatter(t_6h, p_6h, color='red', s=100, marker='X', zorder=10, label='Target 6 Jam')
+    plt.plot([last_time, t_6h], [last_price, p_6h], color='red', linestyle='--', linewidth=2)
+
+    plt.title('GRAFIK UTAMA AI DUAL ENGINE (80 JAM)', fontsize=16, fontweight='bold')
+    plt.legend(loc='upper left', framealpha=0.9)
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d %b\n%H:%M'))
     plt.tight_layout()
     plt.savefig(filename, dpi=150)
     plt.close()
 
+def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, filename="chart_zoom.png"):
+    plot_data = df.tail(12) 
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+
+    ax1.plot(plot_data.index, plot_data['Close'], color='black', linewidth=3)
+    ax1.plot(plot_data.index, plot_data['VWAP_24'], color='#ff7f0e', linestyle='-.', linewidth=2)
+    ax1.fill_between(plot_data.index, plot_data['BB_Upper'], plot_data['BB_Lower'], color='gray', alpha=0.15)
+
+    last_time = plot_data.index[-1]
+    last_price = plot_data['Close'].iloc[-1]
+    
+    t_1h = last_time + pd.Timedelta(hours=1)
+    p_1h = last_price + (atr * (prob_1h - 0.5) * 2)
+    t_6h = last_time + pd.Timedelta(hours=6)
+    p_6h = last_price + (atr * (prob_6h - 0.5) * 4)
+    
+    ax1.scatter(t_1h, p_1h, color='blue', s=100)
+    ax1.plot([last_time, t_1h], [last_price, p_1h], color='blue', linestyle='--')
+    ax1.scatter(t_6h, p_6h, color='red', s=120, marker='X')
+    ax1.plot([last_time, t_6h], [last_price, p_6h], color='red', linestyle='--')
+
+    ax1.annotate(f"Harga: {format_usd(last_price)}", (last_time, last_price), xytext=(0, -25), textcoords='offset points', ha='center', bbox=dict(boxstyle="round", fc="black", alpha=0.8), color="white")
+    ax1.set_title('🔍 ZOOM PITA BOLLINGER & TARGET GANDA', fontsize=16, fontweight='bold')
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150)
+    plt.close()
+
+def plot_dashboard_indicators(df, filename="chart_indicators.png"):
+    try:
+        plot_data = df.tail(80)
+        plt.style.use('seaborn-v0_8-darkgrid')
+        fig = plt.figure(figsize=(14, 16))
+        gs = fig.add_gridspec(4, 1, height_ratios=[2, 1, 1, 1], hspace=0.3)
+
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.plot(plot_data.index, plot_data['Close'], color='black', label='Harga BTC', linewidth=2)
+        ax1.plot(plot_data.index, plot_data['EMA20'], color='blue', alpha=0.8, label='EMA 20')
+        ax1.plot(plot_data.index, plot_data['EMA50'], color='red', alpha=0.8, label='EMA 50')
+        ax1.set_title('1. TREN HARGA & EMA', fontweight='bold')
+        ax1.legend(loc='upper left')
+
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.plot(plot_data.index, plot_data['RSI'], color='purple', linewidth=2, label='RSI')
+        ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
+        ax2.axhline(30, color='green', linestyle='--', alpha=0.5)
+        ax2.set_title('2. RSI (Momentum)', fontweight='bold')
+        ax2.legend(loc='upper left')
+
+        ax3 = fig.add_subplot(gs[2, 0])
+        ax3.bar(plot_data.index, plot_data['MACD_Hist'], color=np.where(plot_data['MACD_Hist']>0, 'green', 'red'), alpha=0.5)
+        ax3.plot(plot_data.index, plot_data['MACD_Line'], color='blue', label='MACD')
+        ax3.plot(plot_data.index, plot_data['MACD_Signal'], color='orange', label='Signal')
+        ax3.set_title('3. MACD', fontweight='bold')
+        ax3.legend(loc='upper left')
+
+        ax4 = fig.add_subplot(gs[3, 0])
+        ax4.plot(plot_data.index, plot_data['ADX'], color='black', linewidth=2, label='ADX')
+        ax4.plot(plot_data.index, plot_data['+DI'], color='green', alpha=0.8, label='+DI')
+        ax4.plot(plot_data.index, plot_data['-DI'], color='red', alpha=0.8, label='-DI')
+        ax4.set_title('4. ADX & DMI', fontweight='bold')
+        ax4.legend(loc='upper left')
+
+        for ax in [ax1, ax2, ax3, ax4]: ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b\n%H:%M'))
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150)
+        plt.close()
+    except Exception as e:
+        diagnostics["chart"] = f"❌ Gagal Render Dashboard ({str(e)[:20]})"
+
+# ------------------------------------------------------------------------------
+# 7. TELEGRAM SENDER
+# ------------------------------------------------------------------------------
 def send_telegram_messages(pesan_utama, chart_paths, pesan_diag):
     if not TELEGRAM_BOT_TOKEN: return
     url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    
     requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_utama, 'parse_mode': 'Markdown'})
     for path in chart_paths:
         if os.path.exists(path):
@@ -416,6 +510,10 @@ def main():
         latest_close_usd = df['Close'].iloc[-1]
         volatility = df["Volatility"].iloc[-1]
         current_atr = df["ATR"].iloc[-1]
+        news_status = fetch_crypto_news_sentiment()
+        
+        tren_status = "Kuat (Pasar sedang aktif bergerak)" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways (Pasar ragu-ragu)"
+        vwap_status = "Aman (Harga di atas rata-rata tarikan bandar)" if latest_close_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah rata-rata tarikan bandar)"
         
         try: prob_1h = train_honest_model(df, features, "Target_1H", shift_len=1)
         except Exception as e: diagnostics["ai_1h"] = f"❌ Error 1H ({str(e)[:15]})"; prob_1h = 0.5
@@ -423,7 +521,7 @@ def main():
         try: prob_6h = train_honest_model(df, features, "Target_6H", shift_len=6)
         except Exception as e: diagnostics["ai_6h"] = f"❌ Error 6H ({str(e)[:15]})"; prob_6h = 0.5
 
-        # EVALUASI MURNI RUPIAH
+        # EVALUASI MURNI RUPIAH INDODAX
         eval_1h, eval_6h, risk_mult = manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr)
         
         # GENERATE JSON UNTUK WEB3 FRONTEND
@@ -433,11 +531,21 @@ def main():
         exp_1h_usd, var95_usd = monte_carlo_simulation(latest_close_usd, volatility, steps=1) 
         var95_idr = var95_usd * kurs_idr
         
-        def get_arah(prob): return "NAIK 📈" if prob > 0.5 else "TURUN 📉"
+        def get_arah(prob):
+            if prob >= 0.6: return "NAIK KUAT 🚀"
+            elif prob > 0.5: return "Cenderung NAIK 📈"
+            elif prob <= 0.4: return "TURUN KUAT 🚨"
+            else: return "Cenderung TURUN 📉"
             
         arah_1h = get_arah(prob_1h)
         arah_6h = get_arah(prob_6h)
         
+        if prob_1h > 0.5 and prob_6h > 0.5: kesimpulan = "Tren utama NAIK, jangka pendek juga NAIK. Momentum sangat bagus (STRONG BUY)."
+        elif prob_1h <= 0.5 and prob_6h > 0.5: kesimpulan = "Tren utama NAIK, tapi 1 jam ke depan KOREKSI TURUN. Waktu bagus untuk Buy the Dip (Cicil Bawah)."
+        elif prob_1h > 0.5 and prob_6h <= 0.5: kesimpulan = "Ada pantulan NAIK sementara, tapi tren 6 jam masih TURUN. Rawan jebakan (Hindari/Sell on Strength)."
+        else: kesimpulan = "Pasar sedang HANCUR. Jangka pendek dan panjang kompak TURUN. (STRONG SELL / WAIT)."
+
+        # LAPORAN TELEGRAM FULL (SAMA SEPERTI VERSI SEBELUMNYA)
         pesan_utama = f"💎 *LAPORAN TRADING AI GODMODE (WEB3 ENGINE)* 💎\n"
         pesan_utama += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
         pesan_utama += f"💰 *Harga BTC Sekarang:* {format_rupiah(indodax_live_idr)}\n\n"
@@ -450,20 +558,36 @@ def main():
         pesan_utama += f"├ Arah: *{arah_6h}* (Keyakinan: {prob_6h*100:.1f}%)\n"
         pesan_utama += f"└ Cek 6 Jam Lalu: {eval_6h}\n\n"
         
-        pesan_utama += f"📊 *MANAJEMEN MODAL:*\n"
-        pesan_utama += f"├ Alokasi Modal Aman: Maksimal *{exposure}%* saldo.\n"
-        pesan_utama += f"└ Batas Apes (SL 95%): {format_rupiah(var95_idr)}\n\n"
-
-        plot_professional_analysis(df, prob_1h, prob_6h, "chart_main.png")
+        pesan_utama += f"🚦 *KESIMPULAN SINYAL:*\n_{kesimpulan}_\n\n"
         
-        pesan_diag = f"🛠️ *DIAGNOSTIK SISTEM WEB3* 🛠️\n"
-        for k, v in diagnostics.items(): pesan_diag += f"├ {v}\n"
-        pesan_diag += f"└ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik"
+        pesan_utama += f"📊 *MANAJEMEN MODAL & PASAR:*\n"
+        if risk_mult < 1.0:
+            pesan_utama += f"├ ⚠️ *STATUS:* REM DARURAT AKTIF (Akurasi AI Turun!)\n"
+        pesan_utama += f"├ Alokasi Modal Aman: Maksimal *{exposure}%* saldo.\n"
+        pesan_utama += f"├ Tren Saat Ini (ADX): {tren_status}\n"
+        pesan_utama += f"├ Posisi Bandar (VWAP): {vwap_status}\n"
+        pesan_utama += f"└ Batas Apes (SL 95%): {format_rupiah(var95_idr)}\n\n"
+        
+        pesan_utama += f"📰 *SENTIMEN BERITA:* {news_status}"
 
-        send_telegram_messages(pesan_utama, ["chart_main.png"], pesan_diag)
+        # RENDER 3 GRAFIK LENGKAP
+        plot_professional_analysis(df, prob_1h, prob_6h, current_atr, "chart_main.png")
+        plot_zoomed_analysis(df, prob_1h, prob_6h, current_atr, "chart_zoom.png")
+        plot_dashboard_indicators(df, "chart_indicators.png")
+        
+        # PESAN DIAGNOSTIK
+        global_status = "🟢 *BOT BERJALAN NORMAL 100%*" if all("✅" in v for v in diagnostics.values()) else "🟡 *BERJALAN DENGAN PERINGATAN*"
+        pesan_diag = f"🛠️ *DIAGNOSTIK & KESEHATAN SISTEM* 🛠️\n\n"
+        for k, v in diagnostics.items(): pesan_diag += f"├ {v}\n"
+        pesan_diag += f"├ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik\n\n"
+        pesan_diag += f"Status Global: {global_status}"
+
+        # KIRIM SEMUANYA KE TELEGRAM
+        send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
 
     except Exception as fatal_e:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={'chat_id': TELEGRAM_CHAT_ID, 'text': f"🚨 FATAL ERROR: {fatal_e}"})
+        pesan_fatal = f"🚨 *BOT MATI MENDADAK (FATAL ERROR)* 🚨\n\nPenyebab: {str(fatal_e)}\nWaktu: {sekarang_wita.strftime('%H:%M WITA')}"
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_fatal})
 
 if __name__ == "__main__":
     main()
