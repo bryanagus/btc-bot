@@ -36,9 +36,28 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       # MENGGUNAKAN ACTION OTOMATIS DENGAN TOKEN UNTUK SIMPAN CSV & JSON
-      - name: Auto Save CSV to GitHub
+      - name: Auto Save CSV & JSON to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🤖 Auto-update Jurnal Prediksi AI [skip ci]"
           file_pattern: 'ai_history_log.csv dashboard_data.json'
           #push_options: '--force' # Memaksa masuk jika branch terkunci
+
+      # =========================================================
+      # TAHAP 2: KIRIM DATA KE INFINITYFREE VIA FTP
+      # =========================================================
+      - name: 🚀 Upload ke Web InfinityFree
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          server-dir: htdocs/ # Folder wajib InfinityFree untuk publik
+          # Demi keamanan, JANGAN kirim source code python dan CSV database ke web publik!
+          exclude: |
+            **/.git*
+            **/.git*/**
+            main.py
+            requirements.txt
+            ai_history_log.csv
+            README.md
