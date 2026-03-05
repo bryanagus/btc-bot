@@ -1,89 +1,9 @@
-🚀 BTC Quant Godmode Pro Max
-BTC Quant Godmode Pro Max adalah sistem algorithmic trading cerdas untuk Bitcoin (BTC/IDR) di Indodax. Sistem ini menggabungkan analisis teknikal, Ensemble Machine Learning, simulasi stokastik (Monte Carlo), dan pemrosesan bahasa alami (NLP) untuk memberikan rekomendasi perdagangan dengan tingkat akurasi yang diuji secara ketat tanpa data leakage.
-Sistem ini dirancang untuk berjalan secara serverless 24/7 menggunakan GitHub Actions dan mengirimkan laporan lengkap beserta grafik ke Telegram Anda.
-✨ Fitur Utama
- * 🧠 Ensemble Machine Learning Anti-Leakage: Menggabungkan RandomForest, GradientBoosting, dan LogisticRegression. Divalidasi secara ketat menggunakan TimeSeriesSplit agar AI tidak "mengintip" data masa depan.
- * ⚡ Real-Time Indodax API: Tidak ada delay. Prediksi AI selalu menggunakan harga detik terakhir langsung dari public API Indodax.
- * 📰 VADER NLP News Sentiment: Membaca dan menganalisis emosi dari puluhan berita kripto global terbaru (CoinDesk, CoinTelegraph, dll) untuk mendeteksi sentimen bullish atau bearish.
- * 🎲 Monte Carlo & Dynamic Kelly Criterion: Mengkalkulasi Value at Risk (VaR 95%) dan mensimulasikan ribuan skenario harga 24 jam ke depan untuk memberikan rekomendasi persentase alokasi modal (Risk/Reward dinamis).
- * 📊 Dual Auto-Charting: Menghasilkan dua grafik profesional secara otomatis:
-   * Main Chart (80 Jam): Lengkap dengan VWAP, MA, Bollinger Bands, RSI, dan ADX.
-   * Zoom Chart (6 Jam): Fokus pada pergerakan jangka pendek beserta titik target AI.
- * 📲 Telegram Integration: Laporan komprehensif dikirim langsung ke grup/chat pribadi Telegram Anda.
-📸 Pratinjau Laporan Telegram
-(Tambahkan screenshot laporan bot Telegram kamu di sini)
-     
-🛠️ Instalasi & Pengaturan
-Sistem ini didesain untuk berjalan otomatis menggunakan GitHub Actions yang dipicu (triggered) melalui layanan cron gratis seperti cron-job.org.
-1. Persiapan Repositori
- * Fork atau buat repositori baru di GitHub Anda.
- * Pastikan file main.py dan requirements.txt sudah ter-upload di repositori tersebut.
-2. Pengaturan Rahasia (GitHub Secrets)
-Bot memerlukan token Telegram agar bisa mengirim pesan.
- * Buka Repositori GitHub Anda > Settings > Secrets and variables > Actions.
- * Klik New repository secret dan tambahkan 2 rahasia berikut:
-   * TELEGRAM_BOT_TOKEN: Isi dengan token bot Telegram Anda (dapatkan dari BotFather).
-   * TELEGRAM_CHAT_ID: Isi dengan ID Chat Anda atau Grup Anda.
-3. Setup GitHub Actions
-Buat file workflow untuk menjalankan bot secara otomatis.
- * Di repositori Anda, buat folder .github/workflows/.
- * Di dalam folder tersebut, buat file bernama bot.yml.
- * Isi dengan kode berikut:
-<!-- end list -->
-name: Run Quant Godmode Bot
-
-on:
-  workflow_dispatch:
-  repository_dispatch:
-    types: [run-bot]
-
-jobs:
-  trade-bot:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run Godmode Engine
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python main.py
-
-4. Otomatisasi dengan Cron-Job.org
-Agar script berjalan setiap 1 jam, atur trigger eksternal:
- * Buat Personal Access Token (PAT) di akun GitHub Anda (beri akses repo).
- * Daftar/Login ke cron-job.org.
- * Buat cronjob baru dengan jadwal setiap 1 jam (atau sesuai keinginan).
- * Arahkan URL ke: https://api.github.com/repos/USERNAME_KAMU/NAMA_REPO_KAMU/dispatches
- * Gunakan metode POST.
- * Tambahkan Header:
-   * Accept: application/vnd.github.v3+json
-   * Authorization: token ISI_DENGAN_PAT_KAMU
- * Isi Body dengan: {"event_type": "run-bot"}
-📦 Dependencies (requirements.txt)
-Pastikan file requirements.txt Anda memiliki library berikut:
-pandas==2.2.1
-numpy==1.26.4
-matplotlib==3.8.3
-pytz==2024.1
-requests==2.31.0
-yfinance==0.2.37
-scikit-learn==1.4.1.post1
-vaderSentiment==3.3.2
-
-⚠️ Disclaimer Peringatan Risiko
-> Perhatian: Skrip ini murni merupakan alat bantu komputasi dan bukan penasihat keuangan. Perdagangan mata uang kripto (Cryptocurrency) memiliki tingkat risiko yang sangat tinggi dan dapat mengakibatkan hilangnya sebagian atau seluruh modal Anda. Segala keputusan jual/beli yang dilakukan berdasarkan sinyal dari bot ini adalah tanggung jawab pengguna sepenuhnya. Penulis tidak bertanggung jawab atas kerugian finansial apa pun yang mungkin terjadi. Gunakan dengan bijak.
-> 
-Dibuat dengan ❤️ untuk komunitas Algo-Trading.
+🤖 BTC Quant Godmode Pro Max (Dual Engine AI)Bot ini adalah Asisten Trading Kripto Otomatis (Quant Trading) kelas institusi yang dirancang khusus untuk menganalisis pergerakan harga Bitcoin (BTC/IDR) di Indodax. Bot ini berjalan secara autopilot, mengevaluasi risiko secara mandiri, dan mengirimkan sinyal trading beserta grafik visual yang sangat detail langsung ke Telegram Anda setiap jam.🧠 Apa yang Dilakukan Bot Ini? (Secara Sederhana)Bayangkan bot ini sebagai analis keuangan pribadi Anda yang tidak pernah tidur. Setiap 1 jam sekali, dia akan melakukan rutinitas berikut:Bangun & Cek Pasar: Menarik data harga Bitcoin dari pasar global dan Indodax, serta membaca sentimen berita dunia (Positif/Negatif).Berpikir dengan "2 Otak" (AI): * Otak Kiri (Taktis 1 Jam): Menebak apakah 1 jam ke depan harga akan naik atau turun.Otak Kanan (Tren 6 Jam): Menebak arah tren besar 6 jam ke depan.Mengevaluasi Diri (Buka Buku Harian): Bot akan membaca file ai_history_log.csv miliknya untuk melihat apakah tebakannya 1 jam dan 6 jam lalu benar atau salah.Mengerem Risiko: Jika bot sadar bahwa dia sedang sering salah tebak (akurasi menurun), dia akan otomatis menyarankan Anda untuk mengurangi modal (Rem Darurat).Mengirim Laporan: Bot mengirimkan kesimpulan akhir (Beli/Jual/Hold), saran batas Cut Loss (VaR), dan 3 gambar grafik profesional langsung ke Telegram Anda.🔬 Metode Ilmiah yang DigunakanBot ini bukan sekadar menggunakan indikator biasa, melainkan menggabungkan Data Science dan Risk Management tingkat lanjut:Ensemble Machine Learning: Menggabungkan 3 algoritma AI sekaligus (Logistic Regression, Random Forest, Gradient Boosting) untuk menghasilkan persentase probabilitas arah harga.Zero Data Leakage (Anti-Bohong): AI dikarantina secara ketat saat masa latihan. AI 1 Jam membuang 1 data terakhir, dan AI 6 Jam membuang 6 data terakhir agar tidak bisa menyontek (Look-ahead bias / Repainting).Multi-Timeframe Analysis: Menganalisis 2 rentang waktu berbeda untuk mencegah "sinyal palsu" (noise).Dynamic Kelly Criterion: Rumus matematika kasino yang diadaptasi untuk pasar finansial guna menghitung persentase modal paling ideal berdasarkan probabilitas kemenangan AI.Monte Carlo Simulation (VaR 95%): Mensimulasikan ribuan kemungkinan pergerakan harga untuk mencari titik Stop Loss (Batas Apes) yang paling presisi.Fast Backoff Retry: Sistem pantang menyerah yang mencoba menghubungi server API secara bertahap (5s, 15s, 30s) jika server exchange sedang down.💻 Cara Install & Menjalankan Secara Lokal (Di Komputer)Jika Anda ingin menguji bot ini di komputer/laptop Anda sendiri sebelum diunggah ke GitHub, ikuti langkah berikut:1. PersiapanPastikan komputer Anda sudah terinstal Python (versi 3.9 atau lebih baru) dan Git.2. Clone RepositoriBuka Terminal / Command Prompt, lalu jalankan:git clone [https://github.com/USERNAME_ANDA/NAMA_REPO_ANDA.git](https://github.com/USERNAME_ANDA/NAMA_REPO_ANDA.git)
+cd NAMA_REPO_ANDA
+3. Install Library yang DibutuhkanInstall semua pustaka Python yang ada di requirements.txt:pip install -r requirements.txt
+4. Set Environment Variables (Token Telegram)Bot butuh token Telegram untuk mengirim pesan. Setel variabel lingkungan (Environment Variables) di terminal Anda:Untuk Windows (Command Prompt):set TELEGRAM_BOT_TOKEN=token_bot_anda_disini
+set TELEGRAM_CHAT_ID=chat_id_anda_disini
+Untuk Mac/Linux:export TELEGRAM_BOT_TOKEN="token_bot_anda_disini"
+export TELEGRAM_CHAT_ID="chat_id_anda_disini"
+5. Jalankan Botpython main.py
+Tunggu sekitar 15-25 detik, dan cek Telegram Anda untuk melihat laporannya!🚀 Cara Push ke GitHub & Setup Otomatis dengan Cron-job.orgMenjalankan scheduler bawaan GitHub Actions sering kali lambat (bisa delay 10-30 menit). Untuk membuat bot berjalan Tepat Waktu setiap jam (misal persis jam 07:00, 08:00), kita menggunakan layanan pihak ketiga gratis: cron-job.org.TAHAP 1: Persiapan di GitHubUpload/Push semua file (main.py, main.yml, requirements.txt, ai_history_log.csv) ke repositori GitHub Anda.Masuk ke tab Settings > Secrets and variables > Actions.Tambahkan 3 rahasia (New repository secret) berikut:TELEGRAM_BOT_TOKEN : (Isi dengan token bot Telegram dari BotFather)TELEGRAM_CHAT_ID : (Isi dengan ID Chat Anda)MY_TOKEN : (Isi dengan Personal Access Token GitHub Anda yang memiliki akses repo. Ini wajib agar bot bisa auto-save / memodifikasi file CSV).TAHAP 2: Bikin "Pintu Masuk" (API Token GitHub)Agar cron-job.org bisa menyuruh GitHub menjalankan bot, Anda butuh Personal Access Token (PAT).Di GitHub, klik Foto Profil Anda > Settings > Developer settings > Personal access tokens (Tokens classic).Klik Generate new token (classic).Beri nama (misal: "CronJobTrigger"), centang kotak repo dan workflow.Klik Generate token, lalu copy dan simpan kode rahasia yang muncul (kode dimulai dengan ghp_...).TAHAP 3: Setup di Cron-job.orgBuka cron-job.org dan buat akun gratis.Klik Create Cronjob.Title: Bot Trading BTC 1 JamURL: https://api.github.com/repos/USERNAME_GITHUB/NAMA_REPO/actions/workflows/main.yml/dispatches(Ganti USERNAME_GITHUB dan NAMA_REPO sesuai dengan milik Anda).Execution schedule: Pilih Every 60 minutes.Klik tab Advanced, atur bagian berikut:Request Method: Pilih POSTDi bagian Headers, tambahkan 2 baris ini:Header 1: Accept ➔ Value: application/vnd.github.v3+jsonHeader 2: Authorization ➔ Value: Bearer ghp_TOKEN_RAHASIA_ANDA_YANG_TADI (Jangan lupa pakai spasi setelah kata Bearer)Di bagian Body, centang kotak dan isi dengan tulisan:{"ref":"main"} (Ganti "main" jika nama branch Anda "master")Klik Create.Selesai! 🎉 Sekarang cron-job.org akan "mengetuk" pintu GitHub Anda setiap 60 menit dengan sangat presisi, dan GitHub Actions akan langsung menghidupkan bot Anda, memproses data, serta mengirimkan notifikasi ke Telegram tanpa delay.
