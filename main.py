@@ -105,9 +105,9 @@ def fetch_crypto_news_sentiment():
 # ------------------------------------------------------------------------------
 # 2. MODUL DATA (GLOBAL USD UNTUK ML, INDODAX UNTUK LAPORAN)
 # ------------------------------------------------------------------------------
-# [PERBAIKAN] Mengubah period dari '180d' menjadi '15d' agar Yahoo Finance 
-# tidak me-lag data dan selalu memberi data Live Jam Ini.
-def fetch_and_engineer_features(period='15d', interval='1h'):
+# [PERBAIKAN SWEET SPOT] Menggunakan period 90 Hari (Cukup cerdas untuk AI, 
+# tapi cukup ringan agar server Yahoo tidak nyangkut parah).
+def fetch_and_engineer_features(period='90d', interval='1h'):
     print("[*] Mengunduh data pasar Global (Bebas Distorsi Indodax)...")
     df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
     
