@@ -2,7 +2,7 @@
 # BTC QUANT GODMODE PRO MAX - DUAL ENGINE VERSION (1H & 6H)
 # Fitur: Fast Backoff Retry, Auto-Risk, System Diagnostics, Zero Data Leakage
 # Indikator Full: ADX, MACD, Trend Slope, Momentum, Regime, VWAP, Bollinger
-# Visual: Dual Target, Anti-Repainting, USD Stabil
+# Visual: Dual Target, Anti-Repainting, USD Stabil, Dashboard Indikator
 # Zona Waktu: WITA (Asia/Makassar)
 # ==============================================================================
 import pandas as pd
@@ -37,7 +37,8 @@ pd.options.mode.chained_assignment = None
 # ================= KONFIGURASI =================
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-HISTORY_FILE = "ai_history_log_v2.csv"
+# KEMBALI MENGGUNAKAN NAMA LAMA AGAR GITHUB ACTIONS BISA MENYIMPANNYA
+HISTORY_FILE = "ai_history_log.csv" 
 # ===============================================
 
 # Global Diagnostics Dictionary
@@ -45,7 +46,8 @@ diagnostics = {
     "api": "✅ Normal (API Terhubung)",
     "csv": "✅ Sinkron (Riwayat Terbaca)",
     "ai_1h": "✅ Optimal",
-    "ai_6h": "✅ Optimal"
+    "ai_6h": "✅ Optimal",
+    "chart": "✅ Optimal (3 Grafik Tercetak)"
 }
 
 def format_rupiah(angka):
@@ -139,7 +141,7 @@ def engineer_features(df):
     low_close = np.abs(df['Low'] - df['Close'].shift())
     df['ATR'] = np.max(pd.concat([high_low, high_close, low_close], axis=1), axis=1).rolling(14).mean()
     
-    # ADX & DI
+    # ADX & DMI
     df['+DM'] = np.where((df['High'] - df['High'].shift(1)) > (df['Low'].shift(1) - df['Low']), np.maximum(df['High'] - df['High'].shift(1), 0), 0)
     df['-DM'] = np.where((df['Low'].shift(1) - df['Low']) > (df['High'] - df['High'].shift(1)), np.maximum(df['Low'].shift(1) - df['Low'], 0), 0)
     df['+DI'] = 100 * (df['+DM'].ewm(alpha=1/14, adjust=False).mean() / df['ATR'])
@@ -152,14 +154,16 @@ def engineer_features(df):
     else:
         df['VWAP_24'] = df['Close']
 
-    # EMA & MACD
+    # EMA & MACD LENGKAP
     df["EMA20"] = df["Close"].ewm(span=20).mean()
     df["EMA50"] = df["Close"].ewm(span=50).mean()
     df["EMA_Spread"] = (df["EMA20"] - df["EMA50"]) / df["Close"]
+    
     ema12 = df["Close"].ewm(span=12).mean()
     ema26 = df["Close"].ewm(span=26).mean()
-    macd = ema12 - ema26
-    df["MACD_Hist"] = macd - macd.ewm(span=9).mean()
+    df["MACD_Line"] = ema12 - ema26
+    df["MACD_Signal"] = df["MACD_Line"].ewm(span=9).mean()
+    df["MACD_Hist"] = df["MACD_Line"] - df["MACD_Signal"]
     
     # Return, Volatility, Slope, Momentum
     df["Return_1H"] = df["Close"].pct_change()
@@ -168,13 +172,12 @@ def engineer_features(df):
     df["Momentum_Accel"] = df["Return_1H"].diff()
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
     
-    # DUAL TARGET (Kunci Analisis Multi-Timeframe)
+    # DUAL TARGET
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    df = df.iloc[:-1] # Buang row terakhir yang blm selesai
+    df = df.iloc[:-1] # Buang row terakhir
     
-    # SEMUA INDIKATOR KINI MASUK KE DALAM OTAK AI
     features_cols = [
         "EMA_Spread", "RSI", "MACD_Hist", "Return_1H", 
         "Volatility", "Trend_Slope", "Momentum_Accel", "Regime", "ADX"
@@ -214,7 +217,7 @@ def train_honest_model(df, features, target_col, shift_len):
     return latest_prob, acc
 
 # ------------------------------------------------------------------------------
-# 4. DATABASE CSV & EVALUASI AUTO-RISK
+# 4. DATABASE CSV & EVALUASI AUTO-RISK (ANTI-CRASH)
 # ------------------------------------------------------------------------------
 def manage_history_and_evaluate(df, prob_1h, prob_6h):
     current_time = df.index[-1]
@@ -233,6 +236,18 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h):
     
     file_exists = os.path.isfile(HISTORY_FILE)
     
+    # SISTEM PEMBERSIH OTOMATIS JIKA FORMAT CSV LAMA TERDETEKSI
+    if file_exists:
+        try:
+            with open(HISTORY_FILE, 'r') as f:
+                header = f.readline()
+            if 'timestamp_target_1h' not in header:
+                print("[!] Format CSV lama terdeteksi. Menghapus agar format baru bisa ditulis...")
+                os.remove(HISTORY_FILE)
+                file_exists = False
+        except:
+            pass
+            
     try:
         if file_exists:
             history = pd.read_csv(HISTORY_FILE)
@@ -263,7 +278,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h):
                 else:
                     eval_6h_msg = f"SALAH ❌ (Nebak {arah_pred})"
 
-            # --- AUTO RISK CALCULATION (Win Rate 5 jam terakhir) ---
+            # --- AUTO RISK CALCULATION ---
             recent_1h = history.tail(5)
             benar_count = 0
             total_eval = 0
@@ -328,7 +343,7 @@ def position_sizing_kelly(prob_1h, prob_6h, atr, risk_multiplier):
     return round(size * 100, 2)
 
 # ------------------------------------------------------------------------------
-# 6. VISUALISASI DUAL TARGET
+# 6. VISUALISASI LENGKAP (3 GRAFIK)
 # ------------------------------------------------------------------------------
 def plot_professional_analysis(df, t_1h, p_1h, t_6h, p_6h, filename="chart_main.png"):
     plot_data = df.tail(80) 
@@ -336,14 +351,13 @@ def plot_professional_analysis(df, t_1h, p_1h, t_6h, p_6h, filename="chart_main.
     fig = plt.figure(figsize=(14, 8))
     
     plt.plot(plot_data.index, plot_data['Close'], label='Harga Asli BTC', color='black', linewidth=2, zorder=5)
-    plt.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Bandar', color='#ff7f0e', linestyle='-.')
+    plt.plot(plot_data.index, plot_data['VWAP_24'], label='Garis Bandar (VWAP)', color='#ff7f0e', linestyle='-.')
     
     last_time = plot_data.index[-1]
     last_price = plot_data['Close'].iloc[-1]
     
     plt.scatter(t_1h, p_1h, color='blue', s=80, marker='o', zorder=10, label=f'Target 1 Jam')
     plt.plot([last_time, t_1h], [last_price, p_1h], color='blue', linestyle='--', linewidth=2)
-    
     plt.scatter(t_6h, p_6h, color='red', s=100, marker='X', zorder=10, label=f'Target 6 Jam')
     plt.plot([last_time, t_6h], [last_price, p_6h], color='red', linestyle='--', linewidth=2)
 
@@ -382,6 +396,58 @@ def plot_zoomed_analysis(df, t_1h, p_1h, t_6h, p_6h, filename="chart_zoom.png"):
     plt.savefig(filename, dpi=150)
     plt.close()
 
+def plot_dashboard_indicators(df, filename="chart_indicators.png"):
+    try:
+        plot_data = df.tail(80)
+        plt.style.use('seaborn-v0_8-darkgrid')
+        fig = plt.figure(figsize=(14, 16))
+        gs = fig.add_gridspec(4, 1, height_ratios=[2, 1, 1, 1], hspace=0.3)
+
+        # 1. TREN HARGA & EMA
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.plot(plot_data.index, plot_data['Close'], color='black', label='Harga BTC', linewidth=2)
+        ax1.plot(plot_data.index, plot_data['EMA20'], color='blue', alpha=0.8, label='EMA 20 (Cepat)')
+        ax1.plot(plot_data.index, plot_data['EMA50'], color='red', alpha=0.8, label='EMA 50 (Lambat)')
+        ax1.set_title('1. TREN HARGA & MOVING AVERAGES (EMA)', fontweight='bold')
+        ax1.legend(loc='upper left')
+
+        # 2. RSI
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.plot(plot_data.index, plot_data['RSI'], color='purple', linewidth=2, label='RSI (Momentum)')
+        ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
+        ax2.axhline(30, color='green', linestyle='--', alpha=0.5)
+        ax2.fill_between(plot_data.index, 70, 100, color='red', alpha=0.1)
+        ax2.fill_between(plot_data.index, 0, 30, color='green', alpha=0.1)
+        ax2.set_ylim(0, 100)
+        ax2.set_title('2. RSI (Relative Strength Index)', fontweight='bold')
+        ax2.legend(loc='upper left')
+
+        # 3. MACD
+        ax3 = fig.add_subplot(gs[2, 0])
+        ax3.bar(plot_data.index, plot_data['MACD_Hist'], color=np.where(plot_data['MACD_Hist']>0, 'green', 'red'), alpha=0.5, label='MACD Histogram')
+        ax3.plot(plot_data.index, plot_data['MACD_Line'], color='blue', label='Garis MACD')
+        ax3.plot(plot_data.index, plot_data['MACD_Signal'], color='orange', label='Garis Signal')
+        ax3.set_title('3. MACD (Pembalikan Arah Tren)', fontweight='bold')
+        ax3.legend(loc='upper left')
+
+        # 4. ADX & DMI
+        ax4 = fig.add_subplot(gs[3, 0])
+        ax4.plot(plot_data.index, plot_data['ADX'], color='black', linewidth=2, label='ADX (Kekuatan Tren)')
+        ax4.plot(plot_data.index, plot_data['+DI'], color='green', alpha=0.8, label='+DI (Tenaga Beli)')
+        ax4.plot(plot_data.index, plot_data['-DI'], color='red', alpha=0.8, label='-DI (Tenaga Jual)')
+        ax4.axhline(25, color='gray', linestyle='--', alpha=0.5, label='Batas Tren Kuat')
+        ax4.set_title('4. ADX & DMI (Kekuatan & Arah Tren)', fontweight='bold')
+        ax4.legend(loc='upper left')
+
+        for ax in [ax1, ax2, ax3, ax4]:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b\n%H:%M'))
+
+        plt.tight_layout()
+        plt.savefig(filename, dpi=150)
+        plt.close()
+    except Exception as e:
+        diagnostics["chart"] = f"❌ Gagal Render Dashboard ({str(e)[:20]})"
+
 # ------------------------------------------------------------------------------
 # 7. TELEGRAM SENDER
 # ------------------------------------------------------------------------------
@@ -406,7 +472,6 @@ def main():
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
     
     try:
-        # 1. Fetch Data
         df, kurs_idr, indodax_live_idr = fetch_data_with_retry()
         df, features = engineer_features(df)
         
@@ -415,11 +480,9 @@ def main():
         current_atr = df["ATR"].iloc[-1]
         news_status = fetch_crypto_news_sentiment()
         
-        # Ekstrak Status ADX & VWAP
         tren_status = "Kuat (Pasar sedang aktif bergerak)" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways (Pasar ragu-ragu)"
         vwap_status = "Aman (Harga di atas rata-rata tarikan bandar)" if latest_close_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah rata-rata tarikan bandar)"
         
-        # 2. Latih Dual Engine
         try:
             prob_1h, acc_1h = train_honest_model(df, features, "Target_1H", shift_len=1)
         except Exception as e:
@@ -432,15 +495,12 @@ def main():
             diagnostics["ai_6h"] = f"❌ Error ML 6H ({str(e)[:20]})"
             prob_6h, acc_6h = 0.5, 0
 
-        # 3. Database & Evaluasi
         t_1h, p_1h, eval_1h, t_6h, p_6h, eval_6h, risk_mult = manage_history_and_evaluate(df, prob_1h, prob_6h)
         
-        # 4. Manajemen Risiko
         exposure = position_sizing_kelly(prob_1h, prob_6h, current_atr, risk_mult)
         exp_1h_usd, var95_usd = monte_carlo_simulation(latest_close_usd, volatility, steps=1) 
         var95_idr = var95_usd * kurs_idr
         
-        # --- SUSUN LAPORAN ---
         def get_arah(prob):
             if prob >= 0.6: return "NAIK KUAT 🚀"
             elif prob > 0.5: return "Cenderung NAIK 📈"
@@ -479,6 +539,10 @@ def main():
         
         pesan_utama += f"📰 *SENTIMEN BERITA:* {news_status}"
 
+        plot_professional_analysis(df, t_1h, p_1h, t_6h, p_6h, "chart_main.png")
+        plot_zoomed_analysis(df, t_1h, p_1h, t_6h, p_6h, "chart_zoom.png")
+        plot_dashboard_indicators(df, "chart_indicators.png")
+
         waktu_eksekusi = time.time() - start_time
         global_status = "🟢 *BOT BERJALAN NORMAL 100%*" if all("✅" in v for v in diagnostics.values()) else "🟡 *BERJALAN DENGAN PERINGATAN*"
         
@@ -487,13 +551,12 @@ def main():
         pesan_diag += f"🗄️ Database CSV: {diagnostics['csv']}\n"
         pesan_diag += f"🧠 Mesin AI 1H: {diagnostics['ai_1h']}\n"
         pesan_diag += f"🧠 Mesin AI 6H: {diagnostics['ai_6h']}\n"
+        pesan_diag += f"📈 Cetak Grafik: {diagnostics['chart']}\n"
         pesan_diag += f"⏱️ Waktu Proses: {waktu_eksekusi:.1f} detik\n\n"
         pesan_diag += f"Status Global: {global_status}"
 
-        plot_professional_analysis(df, t_1h, p_1h, t_6h, p_6h, "chart_main.png")
-        plot_zoomed_analysis(df, t_1h, p_1h, t_6h, p_6h, "chart_zoom.png")
-        
-        send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png"], pesan_diag)
+        # Kirim 3 Foto Sekaligus
+        send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
 
     except Exception as fatal_e:
         pesan_fatal = f"🚨 *BOT MATI MENDADAK (FATAL ERROR)* 🚨\n\n"
