@@ -72,7 +72,6 @@ def fetch_crypto_news_sentiment():
     compound_scores = []
     unique_news = set()
     
-    # Headers untuk bypass blokir berita
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'
     }
@@ -106,7 +105,9 @@ def fetch_crypto_news_sentiment():
 # ------------------------------------------------------------------------------
 # 2. MODUL DATA (GLOBAL USD UNTUK ML, INDODAX UNTUK LAPORAN)
 # ------------------------------------------------------------------------------
-def fetch_and_engineer_features(period='180d', interval='1h'):
+# [PERBAIKAN] Mengubah period dari '180d' menjadi '15d' agar Yahoo Finance 
+# tidak me-lag data dan selalu memberi data Live Jam Ini.
+def fetch_and_engineer_features(period='15d', interval='1h'):
     print("[*] Mengunduh data pasar Global (Bebas Distorsi Indodax)...")
     df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
     
@@ -179,10 +180,8 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
     df["Momentum_Accel"] = df["Return_1H"].diff()
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
     
-    # OTAM AI: Target digeser 6 Jam ke Depan
     df["Target"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    # Membuang baris berjalan agar tidak terjadi data leakage
     df = df.iloc[:-1]
     
     features_cols = ["EMA_Spread","RSI","MACD_Hist","Return_1H","Return_6H",
@@ -196,7 +195,6 @@ def fetch_and_engineer_features(period='180d', interval='1h'):
 def train_and_predict_honest(df, features):
     print("[*] Melatih AI Ensemble (Zero Leakage Pipeline)...")
     
-    # WAJIB membuang 6 baris terakhir saat melatih karena masa depan 6 jam blm terjadi
     train_df = df.iloc[:-6].dropna(subset=features + ["Target"])
     X_train = train_df[features].values
     y_train = train_df["Target"].values
