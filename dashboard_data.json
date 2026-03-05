@@ -1,0 +1,22 @@
+{
+    "last_update": "05 March 2026 20:01 WITA",
+    "live_price_idr": 1231916000.0,
+    "current_prediction": {
+        "prob_1h": 0.43120333105304826,
+        "prob_6h": 0.4604703080530428,
+        "arah_1h": "TURUN",
+        "arah_6h": "TURUN"
+    },
+    "stats": {
+        "win_rate_1h": 0,
+        "win_rate_6h": 0,
+        "risk_multiplier": 1.0
+    },
+    "indicators": {
+        "rsi": 64.54,
+        "adx": 33.53,
+        "trend": "NAIK"
+    },
+    "history_1h": [],
+    "history_6h": []
+}
