@@ -230,8 +230,10 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
     try:
         if file_exists:
             history = pd.read_csv(HISTORY_FILE)
-            history['target_1h'] = pd.to_datetime(history['target_1h'], utc=True).dt.tz_convert('Asia/Makassar')
-            history['target_6h'] = pd.to_datetime(history['target_6h'], utc=True).dt.tz_convert('Asia/Makassar')
+            #history['target_1h'] = pd.to_datetime(history['target_1h'], utc=True).dt.tz_convert('Asia/Makassar')
+            #history['target_6h'] = pd.to_datetime(history['target_6h'], utc=True).dt.tz_convert('Asia/Makassar')
+            history['target_1h'] = pd.to_datetime(history['target_1h'], format='mixed', utc=True).dt.tz_convert('Asia/Makassar')
+            history['target_6h'] = pd.to_datetime(history['target_6h'], format='mixed', utc=True).dt.tz_convert('Asia/Makassar')
             
             # --- EVALUASI 1 JAM (HANYA MENGGUNAKAN USD GLOBAL) ---
             row_1h = history[history['target_1h'] == current_time]
@@ -319,7 +321,8 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         table_1h = []
         for _, row in hist_1h.iterrows():
             table_1h.append({
-                "waktu": pd.to_datetime(row['created_at']).strftime('%d %b %H:%M'),
+                #"waktu": pd.to_datetime(row['created_at']).strftime('%d %b %H:%M'),
+                "waktu": pd.to_datetime(row['created_at'], format='mixed').strftime('%d %b %H:%M'),
                 "start_usd": row['usd_start_price'],
                 "end_usd": row['usd_end_price_1h'],
                 "start_idr": row['idr_start_price'],
@@ -333,7 +336,8 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         table_6h = []
         for _, row in hist_6h.iterrows():
             table_6h.append({
-                "waktu": pd.to_datetime(row['created_at']).strftime('%d %b %H:%M'),
+                #"waktu": pd.to_datetime(row['created_at']).strftime('%d %b %H:%M'),
+                "waktu": pd.to_datetime(row['created_at'], format='mixed').strftime('%d %b %H:%M'),
                 "start_usd": row['usd_start_price'],
                 "end_usd": row['usd_end_price_6h'],
                 "start_idr": row['idr_start_price'],
