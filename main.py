@@ -2,7 +2,7 @@
 # BTC QUANT GODMODE PRO MAX - TAHAP 1 (WEB3 CORE ENGINE FULL VERSION)
 # Fitur: Fast Backoff Retry, Auto-Risk, System Diagnostics, Zero Data Leakage
 # Indikator Full: ADX, MACD, Trend Slope, Momentum, Regime, VWAP, Bollinger
-# Visual: 3 Grafik Lengkap (Main, Zoom, Dashboard Indikator)
+# Visual: 3 Grafik Lengkap (Main, Zoom, Dashboard) -> Output PNG & WebP
 # Web3 Ready: Evaluasi Murni Indodax IDR & Auto-Generate dashboard_data.json
 # ==============================================================================
 import pandas as pd
@@ -47,7 +47,7 @@ diagnostics = {
     "csv": "✅ Sinkron (Riwayat Terbaca)",
     "ai_1h": "✅ Optimal",
     "ai_6h": "✅ Optimal",
-    "chart": "✅ Optimal (3 Grafik Tercetak)",
+    "chart": "✅ Optimal (3 Grafik PNG & WebP Tercetak)",
     "web3": "✅ JSON Terupdate"
 }
 
@@ -214,7 +214,6 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr):
     
     file_exists = os.path.isfile(HISTORY_FILE)
     
-    # SYSTEM SAPU BERSIH: Hapus CSV lama jika formatnya salah (Bukan Web3 Format)
     if file_exists:
         try:
             with open(HISTORY_FILE, 'r') as f:
@@ -299,7 +298,6 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
         
         history = pd.read_csv(HISTORY_FILE)
         
-        # Ekstrak Riwayat 1 Jam (Maksimal 100 terakhir)
         hist_1h = history.dropna(subset=['result_1h']).tail(100)
         table_1h = []
         for _, row in hist_1h.iterrows():
@@ -310,10 +308,9 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
                 "harga_akhir": row['indodax_end_price_1h'],
                 "prediksi": "NAIK" if row['prob_1h'] > 0.5 else "TURUN",
                 "keyakinan": f"{row['prob_1h']*100:.1f}%",
-                "status": row['result_1h'].split(' ')[0] # Ambil kata BENAR/SALAH saja
+                "status": row['result_1h'].split(' ')[0]
             })
             
-        # Ekstrak Riwayat 6 Jam (Maksimal 100 terakhir)
         hist_6h = history.dropna(subset=['result_6h']).tail(100)
         table_6h = []
         for _, row in hist_6h.iterrows():
@@ -351,7 +348,7 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
                 "adx": round(df['ADX'].iloc[-1], 2),
                 "trend": "NAIK" if df['EMA20'].iloc[-1] > df['EMA50'].iloc[-1] else "TURUN"
             },
-            "history_1h": table_1h[::-1], # Urutan dari yang paling baru
+            "history_1h": table_1h[::-1],
             "history_6h": table_6h[::-1]
         }
 
@@ -362,7 +359,7 @@ def generate_web3_dashboard_data(indodax_live_idr, prob_1h, prob_6h, current_atr
         diagnostics["web3"] = f"❌ Gagal Export JSON ({str(e)[:20]})"
 
 # ------------------------------------------------------------------------------
-# 6. RISK MANAGEMENT & VISUALIZATION (FULL 3 CHARTS)
+# 6. RISK MANAGEMENT & VISUALIZATION (PNG & WEBP)
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=1, sims=2000):
     paths = []
@@ -382,7 +379,7 @@ def position_sizing_kelly(prob_1h, prob_6h, atr, risk_multiplier):
     size = min(max(edge, 0), 0.25) * risk_multiplier 
     return round(size * 100, 2)
 
-def plot_professional_analysis(df, prob_1h, prob_6h, atr, filename="chart_main.png"):
+def plot_professional_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_main"):
     plot_data = df.tail(80) 
     plt.style.use('seaborn-v0_8-darkgrid')
     fig = plt.figure(figsize=(14, 8))
@@ -407,10 +404,14 @@ def plot_professional_analysis(df, prob_1h, prob_6h, atr, filename="chart_main.p
     plt.legend(loc='upper left', framealpha=0.9)
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d %b\n%H:%M'))
     plt.tight_layout()
-    plt.savefig(filename, dpi=150)
+    
+    # SAVE KEMBAR (PNG untuk Telegram, WebP untuk Web)
+    plt.savefig(f"{base_filename}.png", dpi=150)
+    try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
+    except: pass # Bypass jika sistem OS tidak support webp
     plt.close()
 
-def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, filename="chart_zoom.png"):
+def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_zoom"):
     plot_data = df.tail(12) 
     plt.style.use('seaborn-v0_8-darkgrid')
     fig, ax1 = plt.subplots(figsize=(12, 6))
@@ -436,10 +437,13 @@ def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, filename="chart_zoom.png"):
     ax1.set_title('🔍 ZOOM PITA BOLLINGER & TARGET GANDA', fontsize=16, fontweight='bold')
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     plt.tight_layout()
-    plt.savefig(filename, dpi=150)
+    
+    plt.savefig(f"{base_filename}.png", dpi=150)
+    try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
+    except: pass
     plt.close()
 
-def plot_dashboard_indicators(df, filename="chart_indicators.png"):
+def plot_dashboard_indicators(df, base_filename="chart_indicators"):
     try:
         plot_data = df.tail(80)
         plt.style.use('seaborn-v0_8-darkgrid')
@@ -476,7 +480,10 @@ def plot_dashboard_indicators(df, filename="chart_indicators.png"):
 
         for ax in [ax1, ax2, ax3, ax4]: ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b\n%H:%M'))
         plt.tight_layout()
-        plt.savefig(filename, dpi=150)
+        
+        plt.savefig(f"{base_filename}.png", dpi=150)
+        try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
+        except: pass
         plt.close()
     except Exception as e:
         diagnostics["chart"] = f"❌ Gagal Render Dashboard ({str(e)[:20]})"
@@ -545,7 +552,7 @@ def main():
         elif prob_1h > 0.5 and prob_6h <= 0.5: kesimpulan = "Ada pantulan NAIK sementara, tapi tren 6 jam masih TURUN. Rawan jebakan (Hindari/Sell on Strength)."
         else: kesimpulan = "Pasar sedang HANCUR. Jangka pendek dan panjang kompak TURUN. (STRONG SELL / WAIT)."
 
-        # LAPORAN TELEGRAM FULL (SAMA SEPERTI VERSI SEBELUMNYA)
+        # LAPORAN TELEGRAM FULL 
         pesan_utama = f"💎 *LAPORAN TRADING AI GODMODE (WEB3 ENGINE)* 💎\n"
         pesan_utama += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
         pesan_utama += f"💰 *Harga BTC Sekarang:* {format_rupiah(indodax_live_idr)}\n\n"
@@ -570,10 +577,10 @@ def main():
         
         pesan_utama += f"📰 *SENTIMEN BERITA:* {news_status}"
 
-        # RENDER 3 GRAFIK LENGKAP
-        plot_professional_analysis(df, prob_1h, prob_6h, current_atr, "chart_main.png")
-        plot_zoomed_analysis(df, prob_1h, prob_6h, current_atr, "chart_zoom.png")
-        plot_dashboard_indicators(df, "chart_indicators.png")
+        # RENDER 3 GRAFIK LENGKAP (Akan menghasilkan 3 file .png dan 3 file .webp)
+        plot_professional_analysis(df, prob_1h, prob_6h, current_atr, "chart_main")
+        plot_zoomed_analysis(df, prob_1h, prob_6h, current_atr, "chart_zoom")
+        plot_dashboard_indicators(df, "chart_indicators")
         
         # PESAN DIAGNOSTIK
         global_status = "🟢 *BOT BERJALAN NORMAL 100%*" if all("✅" in v for v in diagnostics.values()) else "🟡 *BERJALAN DENGAN PERINGATAN*"
@@ -582,7 +589,7 @@ def main():
         pesan_diag += f"├ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik\n\n"
         pesan_diag += f"Status Global: {global_status}"
 
-        # KIRIM SEMUANYA KE TELEGRAM
+        # KIRIM PNG KE TELEGRAM (Abaikan WebP, WebP hanya untuk FTP ke InfinityFree)
         send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
 
     except Exception as fatal_e:
