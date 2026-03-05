@@ -1,11 +1,11 @@
 {
-    "last_update": "06 March 2026 04:01 WITA",
+    "last_update": "06 March 2026 05:01 WITA",
     "prices": {
-        "indodax_idr": 1201263000.0,
+        "indodax_idr": 1206273000.0,
         "global_usd": 70952.4609375,
         "kurs_idr": 16881.0,
         "global_idr_converted": 1197748493.0859375,
-        "spread_premium": 3514506.9140625
+        "spread_premium": 8524506.9140625
     },
     "current_prediction": {
         "prob_1h": 0.5372253489198043,
@@ -51,7 +51,7 @@
             "start_usd": 72484.328125,
             "end_usd": 70952.4609375,
             "start_idr": 1229999000.0,
-            "end_idr": 1201263000.0,
+            "end_idr": 1206273000.0,
             "prediksi": "TURUN",
             "keyakinan": "38.2%",
             "status": "BENAR"
