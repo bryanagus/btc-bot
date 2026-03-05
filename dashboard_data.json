@@ -1,22 +1,32 @@
 {
-    "last_update": "05 March 2026 20:01 WITA",
-    "live_price_idr": 1231916000.0,
+    "last_update": "05 March 2026 21:01 WITA",
+    "live_price_idr": 1234563000.0,
     "current_prediction": {
-        "prob_1h": 0.43120333105304826,
-        "prob_6h": 0.4604703080530428,
+        "prob_1h": 0.39655733027747647,
+        "prob_6h": 0.4528815015629806,
         "arah_1h": "TURUN",
         "arah_6h": "TURUN"
     },
     "stats": {
-        "win_rate_1h": 0,
+        "win_rate_1h": 0.0,
         "win_rate_6h": 0,
         "risk_multiplier": 1.0
     },
     "indicators": {
-        "rsi": 64.54,
-        "adx": 33.53,
+        "rsi": 58.27,
+        "adx": 33.8,
         "trend": "NAIK"
     },
-    "history_1h": [],
+    "history_1h": [
+        {
+            "waktu_prediksi": "05 Mar 18:00",
+            "waktu_target": "05 Mar 19:00",
+            "harga_awal": 1231916000.0,
+            "harga_akhir": 1234563000.0,
+            "prediksi": "TURUN",
+            "keyakinan": "43.1%",
+            "status": "SALAH"
+        }
+    ],
     "history_6h": []
 }
