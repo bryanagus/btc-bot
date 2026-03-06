@@ -74,8 +74,8 @@ def fetch_data_with_retry(period='90d', interval='1h'):
                 df.columns = df.columns.droplevel(1)
             
             # THE ULTIMATE FIX: Biarkan df.index murni UTC (Jangan di-convert ke WITA di sini)
-            if df.index.tzinfo is None: 
-                df.index = df.index.tz_localize('UTC')
+            # PERBAIKAN: Menggunakan pd.to_datetime untuk menghindari error zona waktu ganda dari Yahoo Finance
+            df.index = pd.to_datetime(df.index, utc=True)
             
             # 2. Tarik Kurs Dollar ke Rupiah (Real-time)
             idr_data = yf.download('IDR=X', period='5d', progress=False)
@@ -195,7 +195,7 @@ def engineer_features(df):
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    df = df.iloc[:-1] 
+    # PERBAIKAN: df = df.iloc[:-1] DHAPUS agar bot memegang data (candle) live detik ini untuk kalkulasi spread
     features_cols = ["EMA_Spread", "RSI", "MACD_Hist", "Return_1H", "Volatility", "Trend_Slope", "Momentum_Accel", "Regime", "ADX"]
     return df, features_cols
 
@@ -230,7 +230,8 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
 
     if need_training:
         print(f"[*] Melatih ulang Otak AI ({model_name})... Proses berat!")
-        train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
+        # PERBAIKAN: Potong ekstra 1 candle (-(shift_len + 1)) agar AI tidak membaca masa depan (Zero Look-Ahead Bias)
+        train_df = df.iloc[: -(shift_len + 1)].dropna(subset=features + [target_col])
         X_train = train_df[features].values
         y_train = train_df[target_col].values
         
@@ -274,7 +275,8 @@ def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
             times = resp.get('t', [])
             closes = resp.get('c', [])
             for i, ts in enumerate(times):
-                if ts == t_unix:
+                # PERBAIKAN: Toleransi perbedaan waktu 120 detik (Fuzzy Matching)
+                if abs(ts - t_unix) <= 120:
                     return float(closes[i])
     except:
         pass
