@@ -1,6 +1,7 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX - THE HYBRID ARBITRAGE EDITION
 # Fitur: Fast Backoff, Auto-Risk, Monte Carlo, Kelly Sizing, 3 Full Charts
+# Laporan: Rapi, Mudah Dimengerti, Smart Diagnostic (Hanya lapor jika error)
 # Evaluasi Murni: USD Global (Yahoo Finance) agar AI tidak bingung.
 # Monitor Kasir: Rupiah (Indodax IDR) + Deteksi Selisih Harga (Spread)
 # Output Web3: 3 Gambar (PNG+WebP) & dashboard_data.json Hybrid
@@ -74,7 +75,7 @@ def fetch_data_with_retry(period='90d', interval='1h'):
                 df.columns = df.columns.droplevel(1)
             
             # THE ULTIMATE FIX: Biarkan df.index murni UTC (Jangan di-convert ke WITA di sini)
-            # PERBAIKAN: Menggunakan pd.to_datetime untuk menghindari error zona waktu ganda dari Yahoo Finance
+            # PERBAIKAN: pd.to_datetime menstabilkan format timezone yang kadang error dari YF
             df.index = pd.to_datetime(df.index, utc=True)
             
             # 2. Tarik Kurs Dollar ke Rupiah (Real-time)
@@ -113,7 +114,7 @@ def fetch_indodax_depth():
         sell_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('sell', [])[:limit_sell]])
         return buy_wall, sell_wall
     except Exception as e:
-        diagnostics["api"] += " | 🟡 Depth API Gagal"
+        diagnostics["api"] = diagnostics["api"].replace("✅", "🟡") + " | 🟡 Depth API Gagal"
         return 0, 0
 
 def fetch_crypto_news_sentiment():
@@ -195,7 +196,7 @@ def engineer_features(df):
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    # PERBAIKAN: df = df.iloc[:-1] DHAPUS agar bot memegang data (candle) live detik ini untuk kalkulasi spread
+    # PERBAIKAN: Potongan df.iloc[:-1] dihapus agar harga live tetap masuk hitungan spread
     features_cols = ["EMA_Spread", "RSI", "MACD_Hist", "Return_1H", "Volatility", "Trend_Slope", "Momentum_Accel", "Regime", "ADX"]
     return df, features_cols
 
@@ -230,7 +231,7 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
 
     if need_training:
         print(f"[*] Melatih ulang Otak AI ({model_name})... Proses berat!")
-        # PERBAIKAN: Potong ekstra 1 candle (-(shift_len + 1)) agar AI tidak membaca masa depan (Zero Look-Ahead Bias)
+        # PERBAIKAN: Mencegah AI ngintip masa depan (Zero Look-Ahead Bias) dengan potong ekstra 1 candle
         train_df = df.iloc[: -(shift_len + 1)].dropna(subset=features + [target_col])
         X_train = train_df[features].values
         y_train = train_df[target_col].values
@@ -275,7 +276,7 @@ def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
             times = resp.get('t', [])
             closes = resp.get('c', [])
             for i, ts in enumerate(times):
-                # PERBAIKAN: Toleransi perbedaan waktu 120 detik (Fuzzy Matching)
+                # PERBAIKAN: Toleransi waktu 120 detik (Fuzzy Matching) agar selalu dapat history Indodax
                 if abs(ts - t_unix) <= 120:
                     return float(closes[i])
     except:
@@ -638,19 +639,25 @@ def plot_dashboard_indicators(df, base_filename="chart_indicators"):
         diagnostics["chart"] = f"❌ Gagal Render Dashboard: {e}"
 
 # ------------------------------------------------------------------------------
-# 7. TELEGRAM SENDER
+# 7. TELEGRAM SENDER (DENGAN SMART DIAGNOSTIC ALERT)
 # ------------------------------------------------------------------------------
-def send_telegram_messages(pesan_utama, chart_paths, pesan_diag):
+def send_telegram_messages(pesan_utama, chart_paths, pesan_diag=""):
     if not TELEGRAM_BOT_TOKEN: return
     url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     
+    # 1. Kirim Laporan Utama
     requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_utama, 'parse_mode': 'Markdown'})
+    
+    # 2. Kirim Gambar
     for path in chart_paths:
         if os.path.exists(path):
             with open(path, 'rb') as photo:
                 requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
-    requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_diag, 'parse_mode': 'Markdown'})
+                
+    # 3. Kirim Pesan Diagnostik HANYA JIKA isinya tidak kosong (Sistem Smart Alert)
+    if pesan_diag.strip() != "":
+        requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_diag, 'parse_mode': 'Markdown'})
 
 # ------------------------------------------------------------------------------
 # MAIN EXECUTION
@@ -711,13 +718,16 @@ def main():
         elif prob_1h > 0.5 and prob_6h <= 0.5: kesimpulan = "Pantulan NAIK Sementara di Tren TURUN (SELL ON STRENGTH)."
         else: kesimpulan = "Kompak TURUN (STRONG SELL / WAIT)."
 
-        status_harga_lokal = "MAHAL 🔴 (Premium)" if spread_premium > 0 else "MURAH 🟢 (Discount)"
-        
         # Status Order Book Depth
         if buy_wall > sell_wall:
-            status_orderbook = f"Tembok Beli Kuat 🟢 (Rasio {(buy_wall/sell_wall if sell_wall>0 else 1):.1f}x)"
+            status_orderbook = f"Tembok Beli Kuat 🟢 ({(buy_wall/sell_wall if sell_wall>0 else 1):.1f}x lebih besar dari Jual)"
         else:
-            status_orderbook = f"Tembok Jual Kuat 🔴 (Rasio {(sell_wall/buy_wall if buy_wall>0 else 1):.1f}x)"
+            status_orderbook = f"Tembok Jual Kuat 🔴 ({(sell_wall/buy_wall if buy_wall>0 else 1):.1f}x lebih besar dari Beli)"
+
+        # ====================================================================
+        # SENSOR DETEKSI ERROR SISTEM (SMART DIAGNOSTIC ALERT)
+        # ====================================================================
+        ada_error_sistem = any("✅" not in v for v in diagnostics.values())
 
         # ====================================================================
         # SENSOR SILENT MODE (CEK APAKAH PERLU KIRIM TELEGRAM)
@@ -728,6 +738,10 @@ def main():
         if not os.path.exists(ALERT_FILE):
             kirim_telegram = True
             alasan_kirim = "Bot Baru / Sistem Reset"
+        elif ada_error_sistem:
+            # OVERRIDE: Jika ada error sistem, paksa lapor ke Telegram
+            kirim_telegram = True
+            alasan_kirim = "⚠️ Terdeteksi Gangguan Sistem/API"
         else:
             try:
                 with open(ALERT_FILE, 'r') as f:
@@ -739,7 +753,7 @@ def main():
                 # Syarat 1: Harga Gerak Ekstrem (> 1.5%)
                 if price_diff >= 1.5:
                     kirim_telegram = True
-                    alasan_kirim = f"Pergerakan Harga Drastis: {price_diff:.2f}%"
+                    alasan_kirim = f"Pergerakan Harga Drastis ({price_diff:.2f}%)"
                 
                 # Syarat 2: Kesimpulan Sinyal AI Berubah (ANTI FLIP-FLOP: Cooldown 1 Jam)
                 elif kesimpulan != last_state.get('signal', ''):
@@ -747,17 +761,17 @@ def main():
                         kirim_telegram = False # Tahan pesan (Jangan spam)
                     else:
                         kirim_telegram = True
-                        alasan_kirim = f"Perubahan Sinyal: {last_state.get('signal', 'N/A')} ➔ {kesimpulan}"
+                        alasan_kirim = f"Perubahan Arah Sinyal AI"
                 
                 # Syarat 3: Laporan Wajib (Setiap 4 Jam sekali)
                 elif selisih_waktu >= 14400:
                     kirim_telegram = True
-                    alasan_kirim = "Update Wajib Berkala (4 Jam)"
+                    alasan_kirim = "Update Berkala (Setiap 4 Jam)"
                 else:
                     kirim_telegram = False
             except Exception as e:
                 kirim_telegram = True
-                alasan_kirim = f"Reset State File Error: {e}"
+                alasan_kirim = f"Reset Ingatan Sistem"
 
         # MENCETAK KEMBALI 3 GRAFIK LENGKAP (PNG & WEBP) - Selalu dicetak untuk Web Dashboard
         plot_professional_analysis(df, prob_1h, prob_6h, current_atr, "chart_main")
@@ -774,47 +788,64 @@ def main():
                     'time': time.time()
                 }, f)
 
-            # LAPORAN TELEGRAM FULL
+            # ============================================================
+            # FORMAT LAPORAN TELEGRAM (SUPER RAPI & MUDAH DIMENGERTI)
+            # ============================================================
             pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
-            pesan_utama += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
+            pesan_utama += f"📅 {sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}\n"
+            pesan_utama += f"🔔 *Pemicu Notifikasi:* {alasan_kirim}\n\n"
             
-            pesan_utama += f"💰 *MONITOR HARGA (ARBITRASE):*\n"
-            pesan_utama += f"├ Global (USD): {format_usd(global_usd)}\n"
-            pesan_utama += f"├ Kurs Saat Ini: {format_rupiah(kurs_idr)} / USD\n"
-            pesan_utama += f"├ Nilai Asli (IDR): *{format_rupiah(global_idr_converted)}*\n"
-            pesan_utama += f"├ Pasar Indodax: *{format_rupiah(indodax_live_idr)}*\n"
-            pesan_utama += f"├ Selisih Indodax: {format_rupiah(abs(spread_premium))} -> *{status_harga_lokal}*\n"
-            pesan_utama += f"└ *Order Book (Top 15):* {status_orderbook}\n\n"
+            pesan_utama += f"📊 *MONITOR HARGA & ARBITRASE*\n"
+            pesan_utama += f"• Global (USD): {format_usd(global_usd)}\n"
+            pesan_utama += f"• Kurs Dollar: {format_rupiah(kurs_idr)}\n"
+            pesan_utama += f"• Harga Wajar (IDR): *{format_rupiah(global_idr_converted)}*\n"
+            pesan_utama += f"• Indodax Live: *{format_rupiah(indodax_live_idr)}*\n"
             
-            pesan_utama += f"🎯 *PREDIKSI TAKTIS (1 JAM):*\n"
-            pesan_utama += f"├ Arah (Global): *{arah_1h}* (Yakin {prob_1h*100:.1f}%)\n"
-            pesan_utama += f"└ Cek 1 Jam Lalu: {eval_1h}\n\n"
+            # Penjelasan Interaktif Spread
+            if spread_premium > 0:
+                pesan_utama += f"• Selisih Indodax: {format_rupiah(abs(spread_premium))} (Lebih Mahal)\n"
+                pesan_utama += f"💡 _Tip: Jual di Indodax lebih untung (Harga Premium)._\n\n"
+            else:
+                pesan_utama += f"• Selisih Indodax: {format_rupiah(abs(spread_premium))} (Lebih Murah)\n"
+                pesan_utama += f"💡 _Tip: Beli di Indodax sedang untung (Harga Diskon)._\n\n"
+                
+            pesan_utama += f"🧱 *KONDISI PASAR LOKAL*\n"
+            pesan_utama += f"• Orderbook (Antrean): {status_orderbook}\n\n"
             
-            pesan_utama += f"🔭 *PREDIKSI TREN (6 Jam):*\n"
-            pesan_utama += f"├ Arah (Global): *{arah_6h}* (Yakin {prob_6h*100:.1f}%)\n"
-            pesan_utama += f"└ Cek 6 Jam Lalu: {eval_6h}\n\n"
+            pesan_utama += f"🤖 *PREDIKSI AI (MACHINE LEARNING)*\n"
+            pesan_utama += f"*1 Jam Kedepan (Taktis)*\n"
+            pesan_utama += f"• Arah AI: *{arah_1h}* (Keyakinan: {prob_1h*100:.1f}%)\n"
+            pesan_utama += f"• Rapor AI 1 Jam Lalu: {eval_1h}\n\n"
             
-            pesan_utama += f"🚦 *KESIMPULAN SINYAL:*\n_{kesimpulan}_\n\n"
+            pesan_utama += f"*6 Jam Kedepan (Tren)*\n"
+            pesan_utama += f"• Arah AI: *{arah_6h}* (Keyakinan: {prob_6h*100:.1f}%)\n"
+            pesan_utama += f"• Rapor AI 6 Jam Lalu: {eval_6h}\n\n"
             
-            pesan_utama += f"📊 *MANAJEMEN RISIKO:*\n"
+            pesan_utama += f"🚦 *KESIMPULAN & REKOMENDASI AI*\n"
+            pesan_utama += f"_{kesimpulan}_\n\n"
+            
+            pesan_utama += f"🛡️ *MANAJEMEN RISIKO*\n"
             if risk_mult < 1.0:
-                pesan_utama += f"├ ⚠️ *STATUS:* REM DARURAT AKTIF\n"
-            pesan_utama += f"├ Alokasi Modal Aman: Maksimal *{exposure}%* saldo.\n"
-            pesan_utama += f"├ Tren Global (ADX): {tren_status}\n"
-            pesan_utama += f"├ Posisi Bandar (VWAP): {vwap_status}\n"
-            pesan_utama += f"└ Batas Apes (SL 95%): {format_rupiah(var95_idr)}\n\n"
-            
-            pesan_utama += f"📰 *SENTIMEN BERITA:* {news_status}"
+                pesan_utama += f"⚠️ *STATUS:* REM DARURAT AKTIF (Akurasi Bot Sedang Menurun)\n"
+            pesan_utama += f"• Alokasi Modal Aman: Maksimal *{exposure}%* dari total saldo.\n"
+            pesan_utama += f"• Batas Apes (Stop Loss 95%): {format_rupiah(var95_idr)}\n"
+            pesan_utama += f"• Tren Global (ADX): {tren_status}\n"
+            pesan_utama += f"• Posisi Bandar (VWAP): {vwap_status}\n"
+            pesan_utama += f"• Sentimen Berita Terkini: {news_status}"
 
-            # PESAN DIAGNOSTIK
-            global_status = "🟢 *BOT BERJALAN NORMAL 100%*" if all("✅" in v for v in diagnostics.values()) else "🟡 *BERJALAN DENGAN PERINGATAN*"
-            pesan_diag = f"🛠️ *DIAGNOSTIK SISTEM HYBRID* 🛠️\n\n"
-            for k, v in diagnostics.items(): pesan_diag += f"├ {v}\n"
-            pesan_diag += f"├ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik\n"
-            pesan_diag += f"├ 🔔 Trigger Kirim: {alasan_kirim}\n\n"
-            pesan_diag += f"Status Global: {global_status}"
+            # ============================================================
+            # PEMBUATAN PESAN DIAGNOSTIK (SMART ALERT: HANYA JIKA ERROR)
+            # ============================================================
+            pesan_diag = ""
+            if ada_error_sistem:
+                pesan_diag += f"⚠️ *PERINGATAN GANGGUAN SISTEM BOT* ⚠️\n\n"
+                pesan_diag += "Bagian berikut mendeteksi masalah:\n"
+                for k, v in diagnostics.items():
+                    if "✅" not in v: # Hanya cantumkan yang bermasalah saja
+                        pesan_diag += f"❌ *{k.upper()}*: {v}\n"
+                pesan_diag += f"\n_Bot otomatis menggunakan fallback estimasi. Harap pantau server._"
 
-            # KIRIM 3 GAMBAR KE TELEGRAM
+            # KIRIM LAPORAN UTAMA, 3 GAMBAR, & DIAGNOSTIK KE TELEGRAM
             send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
             print(f"[*] Pesan Telegram terkirim. Alasan: {alasan_kirim}")
         else:
