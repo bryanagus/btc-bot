@@ -108,8 +108,9 @@ def fetch_indodax_depth():
         limit_buy = min(15, len(resp.get('buy', [])))
         limit_sell = min(15, len(resp.get('sell', [])))
         
-        buy_wall = sum([float(x[0]) * float(x[1]) for x in resp['buy'][:limit_buy]])
-        sell_wall = sum([float(x[0]) * float(x[1]) for x in resp['sell'][:limit_sell]])
+        # PERBAIKAN KRITIS: Menggunakan get() agar tidak terjadi KeyError saat Indodax Maintenance
+        buy_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('buy', [])[:limit_buy]])
+        sell_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('sell', [])[:limit_sell]])
         return buy_wall, sell_wall
     except Exception as e:
         diagnostics["api"] += " | 🟡 Depth API Gagal"
@@ -737,10 +738,15 @@ def main():
                 if price_diff >= 1.5:
                     kirim_telegram = True
                     alasan_kirim = f"Pergerakan Harga Drastis: {price_diff:.2f}%"
-                # Syarat 2: Kesimpulan Sinyal AI Berubah
+                
+                # Syarat 2: Kesimpulan Sinyal AI Berubah (ANTI FLIP-FLOP: Cooldown 1 Jam)
                 elif kesimpulan != last_state.get('signal', ''):
-                    kirim_telegram = True
-                    alasan_kirim = f"Perubahan Sinyal: {last_state.get('signal', 'N/A')} ➔ {kesimpulan}"
+                    if selisih_waktu < 3600: # Jika belum 1 jam dari pesan terakhir dikirim
+                        kirim_telegram = False # Tahan pesan (Jangan spam)
+                    else:
+                        kirim_telegram = True
+                        alasan_kirim = f"Perubahan Sinyal: {last_state.get('signal', 'N/A')} ➔ {kesimpulan}"
+                
                 # Syarat 3: Laporan Wajib (Setiap 4 Jam sekali)
                 elif selisih_waktu >= 14400:
                     kirim_telegram = True
