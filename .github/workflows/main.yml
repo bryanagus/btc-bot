@@ -35,12 +35,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # MENGGUNAKAN ACTION OTOMATIS DENGAN TOKEN UNTUK SIMPAN CSV & JSON
+      # MENGGUNAKAN ACTION OTOMATIS DENGAN TOKEN UNTUK SIMPAN CSV & JSON (DITAMBAH PKL & ALERT STATE)
       - name: Auto Save CSV & JSON to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🤖 Auto-update Jurnal Prediksi AI [skip ci]"
-          file_pattern: 'ai_history_log.csv dashboard_data.json'
+          file_pattern: 'ai_history_log.csv dashboard_data.json ai_model_1H.pkl ai_model_6H.pkl last_alert_state.json'
           #push_options: '--force' # Memaksa masuk jika branch terkunci
 
       # =========================================================
@@ -62,3 +62,5 @@ jobs:
             ai_history_log.csv
             README.md
             *.png
+            *.pkl
+            last_alert_state.json
