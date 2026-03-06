@@ -1,7 +1,8 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX - THE HYBRID ARBITRAGE EDITION
 # Fitur: Fast Backoff, Auto-Risk, Monte Carlo, Kelly Sizing, 3 Full Charts
-# Laporan: Rapi, Mudah Dimengerti, Smart Diagnostic (Hanya lapor jika error)
+# Laporan: Rapi, Mudah Dimengerti, Smart Diagnostic, Persentase Perubahan
+# Sensor Waktu: Presisi Cronjob 10 Menitan (Jendela menit 05-19)
 # Evaluasi Murni: USD Global (Yahoo Finance) agar AI tidak bingung.
 # Monitor Kasir: Rupiah (Indodax IDR) + Deteksi Selisih Harga (Spread)
 # Output Web3: 3 Gambar (PNG+WebP) & dashboard_data.json Hybrid
@@ -75,7 +76,6 @@ def fetch_data_with_retry(period='90d', interval='1h'):
                 df.columns = df.columns.droplevel(1)
             
             # THE ULTIMATE FIX: Biarkan df.index murni UTC (Jangan di-convert ke WITA di sini)
-            # PERBAIKAN: pd.to_datetime menstabilkan format timezone yang kadang error dari YF
             df.index = pd.to_datetime(df.index, utc=True)
             
             # 2. Tarik Kurs Dollar ke Rupiah (Real-time)
@@ -105,11 +105,9 @@ def fetch_indodax_depth():
     """ Mengambil data tebalnya tembok Order Book Indodax """
     try:
         resp = requests.get('https://indodax.com/api/depth/btcidr', timeout=10).json()
-        # AMAN DARI CRASH: Ambil maksimal 15, atau sebanyak yang tersedia
         limit_buy = min(15, len(resp.get('buy', [])))
         limit_sell = min(15, len(resp.get('sell', [])))
         
-        # PERBAIKAN KRITIS: Menggunakan get() agar tidak terjadi KeyError saat Indodax Maintenance
         buy_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('buy', [])[:limit_buy]])
         sell_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('sell', [])[:limit_sell]])
         return buy_wall, sell_wall
@@ -147,7 +145,7 @@ def fetch_crypto_news_sentiment():
 # 2. FEATURE ENGINEERING (FULL INDICATORS)
 # ------------------------------------------------------------------------------
 def engineer_features(df):
-    df = df.copy() # Anti-Warning pandas (SettingWithCopyWarning)
+    df = df.copy() 
     
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
@@ -196,7 +194,6 @@ def engineer_features(df):
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    # PERBAIKAN: Potongan df.iloc[:-1] dihapus agar harga live tetap masuk hitungan spread
     features_cols = ["EMA_Spread", "RSI", "MACD_Hist", "Return_1H", "Volatility", "Trend_Slope", "Momentum_Accel", "Regime", "ADX"]
     return df, features_cols
 
@@ -207,7 +204,6 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
     model_file = f"ai_model_{model_name}.pkl"
     need_training = True
     
-    # Cek apakah otak AI sudah ada dan usianya di bawah 24 Jam
     if os.path.exists(model_file):
         file_age = time.time() - os.path.getmtime(model_file)
         if file_age < 86400: # 86400 detik = 24 jam
@@ -231,7 +227,6 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
 
     if need_training:
         print(f"[*] Melatih ulang Otak AI ({model_name})... Proses berat!")
-        # PERBAIKAN: Mencegah AI ngintip masa depan (Zero Look-Ahead Bias) dengan potong ekstra 1 candle
         train_df = df.iloc[: -(shift_len + 1)].dropna(subset=features + [target_col])
         X_train = train_df[features].values
         y_train = train_df[target_col].values
@@ -249,7 +244,6 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         gb = GradientBoostingClassifier(random_state=42)
         gb.fit(X_train_scaled, y_train)
         
-        # Simpan Otak AI ke file
         with open(model_file, 'wb') as f:
             pickle.dump({'lr': lr_cal, 'rf': rf, 'gb': gb, 'scaler': scaler}, f)
 
@@ -263,31 +257,23 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
 # 4. DATABASE HYBRID, AUTO-HEALING & LAZY FETCHING INDODAX
 # ------------------------------------------------------------------------------
 def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
-    """
-    LAZY FETCHING (Jalur B): Ambil riwayat grafik Indodax via API Tradingview.
-    Jika gagal/terblokir, pakai rasio premium sebagai estimasi matematis yang wajar.
-    """
     try:
         t_unix = int(t_target_utc.timestamp())
-        # Ambil data dari 1 jam sebelum sampai 1 jam sesudah target unix
         url = f"https://indodax.com/tradingview/history?symbol=BTCIDR&resolution=60&from={t_unix-3600}&to={t_unix+3600}"
         resp = requests.get(url, timeout=10).json()
         if resp.get('s') == 'ok':
             times = resp.get('t', [])
             closes = resp.get('c', [])
             for i, ts in enumerate(times):
-                # PERBAIKAN: Toleransi waktu 120 detik (Fuzzy Matching) agar selalu dapat history Indodax
                 if abs(ts - t_unix) <= 120:
                     return float(closes[i])
     except:
         pass
     
-    # Fallback jika API Riwayat Gagal: Rasio Premium
     past_ratio = past_idr / past_usd
     return actual_usd * past_ratio
 
 def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr):
-    # current_time SEKARANG 100% UTC (Global Time)
     current_time = df.index[-1]
     usd_live_price = float(df['Close'].iloc[-1])
     target_time_1h = current_time + pd.Timedelta(hours=1)
@@ -299,13 +285,11 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
     
     file_exists = os.path.isfile(HISTORY_FILE)
     
-    # Deteksi Format Lama & Reset jika perlu
     if file_exists:
         try:
             with open(HISTORY_FILE, 'r') as f:
                 header = f.readline()
             if 'usd_start_price' not in header:
-                print("[!] Format CSV lama terdeteksi. Mereset untuk format Hybrid...")
                 os.remove(HISTORY_FILE)
                 file_exists = False
         except: pass
@@ -313,13 +297,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
     try:
         if file_exists:
             history = pd.read_csv(HISTORY_FILE)
-            
-            # FORMAT MIXED + UTC TRUE: Solusi kebal error format waktu apapun
             history['target_1h'] = pd.to_datetime(history['target_1h'], format='mixed', utc=True)
             history['target_6h'] = pd.to_datetime(history['target_6h'], format='mixed', utc=True)
             
-            # --- EVALUASI 1 JAM (AUTO-HEALING MASA LALU YANG BOLONG) ---
-            # Cari semua baris yang targetnya <= sekarang DAN hasilnya kosong
             mask_1h = (history['target_1h'] <= current_time) & (history['result_1h'].isna())
             for idx, row in history[mask_1h].iterrows():
                 t_target = row['target_1h']
@@ -337,16 +317,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                         
                     history.loc[idx, 'result_1h'] = hasil
                     history.loc[idx, 'usd_end_price_1h'] = actual_end_price
-                    
-                    if t_target == current_time:
-                        # Bot Tepat Waktu: Pakai Indodax Real-time
-                        history.loc[idx, 'idr_end_price_1h'] = indodax_live_idr
-                        eval_1h_msg = hasil
-                    else:
-                        # Bot Telat: Panggil fungsi Lazy Fetching Indodax
-                        history.loc[idx, 'idr_end_price_1h'] = get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
+                    history.loc[idx, 'idr_end_price_1h'] = indodax_live_idr if t_target == current_time else get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
+                    if t_target == current_time: eval_1h_msg = hasil
 
-            # --- EVALUASI 6 JAM (AUTO-HEALING MASA LALU YANG BOLONG) ---
             mask_6h = (history['target_6h'] <= current_time) & (history['result_6h'].isna())
             for idx, row in history[mask_6h].iterrows():
                 t_target = row['target_6h']
@@ -364,16 +337,11 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                         
                     history.loc[idx, 'result_6h'] = hasil
                     history.loc[idx, 'usd_end_price_6h'] = actual_end_price
-                    
-                    if t_target == current_time:
-                        history.loc[idx, 'idr_end_price_6h'] = indodax_live_idr
-                        eval_6h_msg = hasil
-                    else:
-                        history.loc[idx, 'idr_end_price_6h'] = get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
+                    history.loc[idx, 'idr_end_price_6h'] = indodax_live_idr if t_target == current_time else get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
+                    if t_target == current_time: eval_6h_msg = hasil
 
             history.to_csv(HISTORY_FILE, index=False)
 
-            # AUTO RISK CALCULATION
             recent_1h = history.dropna(subset=['result_1h']).tail(5)
             if len(recent_1h) >= 3:
                 benar_count = recent_1h['result_1h'].str.contains('BENAR').sum()
@@ -386,13 +354,11 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
         diagnostics["csv"] = f"❌ Error Baca/Update CSV: {e}"
         risk_multiplier = 1.0
 
-    # SIMPAN PREDIKSI BARU KE DALAM CSV (FORMAT UTC MURNI - ISO 8601)
     try:
         t_curr_str = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
         t_1h_str = target_time_1h.strftime('%Y-%m-%dT%H:%M:%SZ')
         t_6h_str = target_time_6h.strftime('%Y-%m-%dT%H:%M:%SZ')
         
-        # Mencegah Penulisan Baris Duplikat jika bot jalan tiap beberapa menit
         is_duplicate = False
         if file_exists:
             try:
@@ -433,7 +399,6 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         hist_1h = history.dropna(subset=['result_1h']).tail(100)
         table_1h = []
         for _, row in hist_1h.iterrows():
-            # Ubah UTC -> WITA Khusus untuk tampilan
             waktu_local = pd.to_datetime(row['created_at'], format='mixed', utc=True).tz_convert('Asia/Makassar')
             table_1h.append({
                 "waktu": waktu_local.strftime('%d %b %H:%M'),
@@ -521,9 +486,8 @@ def position_sizing_kelly(prob_1h, prob_6h, atr, risk_multiplier):
     return round(size * 100, 2)
 
 def plot_professional_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_main"):
-    plt.clf() # Cegah Memory Leak
+    plt.clf() 
     plot_data = df.tail(80).copy() 
-    # Tampilan Grafik Dikonversi ke WITA (Makassar)
     plot_data.index = plot_data.index.tz_convert('Asia/Makassar')
     
     plt.style.use('seaborn-v0_8-darkgrid')
@@ -553,7 +517,7 @@ def plot_professional_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_m
     plt.savefig(f"{base_filename}.png", dpi=150)
     try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
     except: pass 
-    plt.close('all') # Bersihkan RAM total
+    plt.close('all')
 
 def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_zoom"):
     plt.clf()
@@ -646,16 +610,12 @@ def send_telegram_messages(pesan_utama, chart_paths, pesan_diag=""):
     url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     
-    # 1. Kirim Laporan Utama
     requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_utama, 'parse_mode': 'Markdown'})
-    
-    # 2. Kirim Gambar
     for path in chart_paths:
         if os.path.exists(path):
             with open(path, 'rb') as photo:
                 requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
                 
-    # 3. Kirim Pesan Diagnostik HANYA JIKA isinya tidak kosong (Sistem Smart Alert)
     if pesan_diag.strip() != "":
         requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_diag, 'parse_mode': 'Markdown'})
 
@@ -664,15 +624,12 @@ def send_telegram_messages(pesan_utama, chart_paths, pesan_diag=""):
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
-    # Tampilan Laporan Telegram selalu dikonversi ke Waktu Lokal (WITA)
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
     
     try:
-        # Panggil Fetch Data (USD, Kurs, IDR)
         df, kurs_idr, indodax_live_idr = fetch_data_with_retry()
         df, features = engineer_features(df)
         
-        # Tarik data Order Book Depth (Tembok Indodax)
         buy_wall, sell_wall = fetch_indodax_depth()
         
         global_usd = float(df['Close'].iloc[-1])
@@ -686,20 +643,16 @@ def main():
         tren_status = "Kuat" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways"
         vwap_status = "Aman (Harga di atas VWAP)" if global_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah VWAP)"
         
-        # Prediksi AI dengan parameter model_name untuk Caching
         try: prob_1h = train_honest_model(df, features, "Target_1H", shift_len=1, model_name="1H")
         except Exception as e: diagnostics["ai_1h"] = f"❌ Error 1H: {e}"; prob_1h = 0.5
             
         try: prob_6h = train_honest_model(df, features, "Target_6H", shift_len=6, model_name="6H")
         except Exception as e: diagnostics["ai_6h"] = f"❌ Error 6H: {e}"; prob_6h = 0.5
 
-        # EVALUASI HYBRID (Evaluasi USD, Simpan IDR - Auto Healing Active)
         eval_1h, eval_6h, risk_mult = manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr)
         
-        # GENERATE JSON UNTUK WEB3
         generate_web3_dashboard_data(indodax_live_idr, global_usd, kurs_idr, prob_1h, prob_6h, df, risk_mult)
         
-        # PERHITUNGAN MONTE CARLO & KELLY
         exposure = position_sizing_kelly(prob_1h, prob_6h, current_atr, risk_mult)
         exp_1h_usd, var95_usd = monte_carlo_simulation(global_usd, volatility, steps=1) 
         var95_idr = var95_usd * kurs_idr
@@ -718,28 +671,29 @@ def main():
         elif prob_1h > 0.5 and prob_6h <= 0.5: kesimpulan = "Pantulan NAIK Sementara di Tren TURUN (SELL ON STRENGTH)."
         else: kesimpulan = "Kompak TURUN (STRONG SELL / WAIT)."
 
-        # Status Order Book Depth
         if buy_wall > sell_wall:
-            status_orderbook = f"Tembok Beli Kuat 🟢 ({(buy_wall/sell_wall if sell_wall>0 else 1):.1f}x lebih besar dari Jual)"
+            status_orderbook = f"Tembok Beli Kuat 🟢 ({(buy_wall/sell_wall if sell_wall>0 else 1):.1f}x lipat dari Jual)"
         else:
-            status_orderbook = f"Tembok Jual Kuat 🔴 ({(sell_wall/buy_wall if buy_wall>0 else 1):.1f}x lebih besar dari Beli)"
+            status_orderbook = f"Tembok Jual Kuat 🔴 ({(sell_wall/buy_wall if buy_wall>0 else 1):.1f}x lipat dari Beli)"
 
-        # ====================================================================
-        # SENSOR DETEKSI ERROR SISTEM (SMART DIAGNOSTIC ALERT)
-        # ====================================================================
         ada_error_sistem = any("✅" not in v for v in diagnostics.values())
 
         # ====================================================================
-        # SENSOR SILENT MODE (CEK APAKAH PERLU KIRIM TELEGRAM)
+        # SENSOR SILENT MODE, CRON KALKULASI PERSENTASE NAIK/TURUN
         # ====================================================================
         kirim_telegram = False
         alasan_kirim = ""
+        is_routine_update = False
+        teks_perubahan = "⚖️ Data Awal" 
+        
+        waktu_sekarang_str = sekarang_wita.strftime('%Y-%m-%d-%H')
+        menit_sekarang = sekarang_wita.minute
         
         if not os.path.exists(ALERT_FILE):
             kirim_telegram = True
-            alasan_kirim = "Bot Baru / Sistem Reset"
+            alasan_kirim = "Bot Baru Dinyalakan / Sistem Reset"
+            is_routine_update = True
         elif ada_error_sistem:
-            # OVERRIDE: Jika ada error sistem, paksa lapor ke Telegram
             kirim_telegram = True
             alasan_kirim = "⚠️ Terdeteksi Gangguan Sistem/API"
         else:
@@ -747,53 +701,73 @@ def main():
                 with open(ALERT_FILE, 'r') as f:
                     last_state = json.load(f)
                 
-                price_diff = abs((global_usd - last_state.get('price', global_usd)) / last_state.get('price', global_usd)) * 100
+                # --- KALKULASI PERSENTASE HARGA ---
+                last_price_saved = last_state.get('price', global_usd)
+                if last_price_saved > 0:
+                    raw_diff_pct = ((global_usd - last_price_saved) / last_price_saved) * 100
+                else:
+                    raw_diff_pct = 0.0
+                    
+                if raw_diff_pct > 0:
+                    teks_perubahan = f"📈 Naik {raw_diff_pct:.2f}%"
+                elif raw_diff_pct < 0:
+                    teks_perubahan = f"📉 Turun {abs(raw_diff_pct):.2f}%"
+                else:
+                    teks_perubahan = f"⚖️ Stabil 0.00%"
+                # -----------------------------------
+                
+                price_diff = abs(raw_diff_pct)
                 selisih_waktu = time.time() - last_state.get('time', 0)
+                last_hourly_report = last_state.get('last_hourly_report', '')
                 
                 # Syarat 1: Harga Gerak Ekstrem (> 1.5%)
                 if price_diff >= 1.5:
                     kirim_telegram = True
-                    alasan_kirim = f"Pergerakan Harga Drastis ({price_diff:.2f}%)"
+                    alasan_kirim = f"Pergerakan Harga Drastis"
                 
-                # Syarat 2: Kesimpulan Sinyal AI Berubah (ANTI FLIP-FLOP: Cooldown 1 Jam)
+                # Syarat 2: Kesimpulan Sinyal AI Berubah
                 elif kesimpulan != last_state.get('signal', ''):
-                    if selisih_waktu < 3600: # Jika belum 1 jam dari pesan terakhir dikirim
-                        kirim_telegram = False # Tahan pesan (Jangan spam)
+                    if selisih_waktu < 3600: 
+                        kirim_telegram = False 
                     else:
                         kirim_telegram = True
                         alasan_kirim = f"Perubahan Arah Sinyal AI"
                 
-                # Syarat 3: Laporan Wajib (Setiap 4 Jam sekali)
-                elif selisih_waktu >= 14400:
+                # Syarat 3: Laporan Rutin Cronjob 10-Menitan (Trigger jika menit antara 05 s/d 19)
+                elif 5 <= menit_sekarang < 20 and last_hourly_report != waktu_sekarang_str:
                     kirim_telegram = True
-                    alasan_kirim = "Update Berkala (Setiap 4 Jam)"
+                    alasan_kirim = f"Laporan Rutin Update Market ({sekarang_wita.strftime('%H:10')} WITA)"
+                    is_routine_update = True
+                
                 else:
                     kirim_telegram = False
             except Exception as e:
                 kirim_telegram = True
                 alasan_kirim = f"Reset Ingatan Sistem"
+                is_routine_update = True
 
-        # MENCETAK KEMBALI 3 GRAFIK LENGKAP (PNG & WEBP) - Selalu dicetak untuk Web Dashboard
         plot_professional_analysis(df, prob_1h, prob_6h, current_atr, "chart_main")
         plot_zoomed_analysis(df, prob_1h, prob_6h, current_atr, "chart_zoom")
         plot_dashboard_indicators(df, "chart_indicators")
         
-        # JIKA LOLOS SENSOR, KIRIM KE TELEGRAM
         if kirim_telegram:
-            # Update File Ingatan
+            # Simpan State Baru
+            new_last_hourly = waktu_sekarang_str if is_routine_update else last_state.get('last_hourly_report', '')
             with open(ALERT_FILE, 'w') as f:
                 json.dump({
                     'price': global_usd,
                     'signal': kesimpulan,
-                    'time': time.time()
+                    'time': time.time(),
+                    'last_hourly_report': new_last_hourly
                 }, f)
 
             # ============================================================
-            # FORMAT LAPORAN TELEGRAM (SUPER RAPI & MUDAH DIMENGERTI)
+            # FORMAT LAPORAN TELEGRAM LENGKAP & RAPI (DENGAN PERSENTASE)
             # ============================================================
             pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
             pesan_utama += f"📅 {sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}\n"
-            pesan_utama += f"🔔 *Pemicu Notifikasi:* {alasan_kirim}\n\n"
+            pesan_utama += f"🔔 *Pemicu:* {alasan_kirim}\n"
+            pesan_utama += f"⚡ *Pergerakan:* {teks_perubahan} (Sejak laporan terakhir)\n\n"
             
             pesan_utama += f"📊 *MONITOR HARGA & ARBITRASE*\n"
             pesan_utama += f"• Global (USD): {format_usd(global_usd)}\n"
@@ -801,13 +775,12 @@ def main():
             pesan_utama += f"• Harga Wajar (IDR): *{format_rupiah(global_idr_converted)}*\n"
             pesan_utama += f"• Indodax Live: *{format_rupiah(indodax_live_idr)}*\n"
             
-            # Penjelasan Interaktif Spread
             if spread_premium > 0:
                 pesan_utama += f"• Selisih Indodax: {format_rupiah(abs(spread_premium))} (Lebih Mahal)\n"
                 pesan_utama += f"💡 _Tip: Jual di Indodax lebih untung (Harga Premium)._\n\n"
             else:
                 pesan_utama += f"• Selisih Indodax: {format_rupiah(abs(spread_premium))} (Lebih Murah)\n"
-                pesan_utama += f"💡 _Tip: Beli di Indodax sedang untung (Harga Diskon)._\n\n"
+                pesan_utama += f"💡 _Tip: Beli di Indodax sedang menguntungkan (Harga Diskon)._\n\n"
                 
             pesan_utama += f"🧱 *KONDISI PASAR LOKAL*\n"
             pesan_utama += f"• Orderbook (Antrean): {status_orderbook}\n\n"
@@ -841,15 +814,14 @@ def main():
                 pesan_diag += f"⚠️ *PERINGATAN GANGGUAN SISTEM BOT* ⚠️\n\n"
                 pesan_diag += "Bagian berikut mendeteksi masalah:\n"
                 for k, v in diagnostics.items():
-                    if "✅" not in v: # Hanya cantumkan yang bermasalah saja
+                    if "✅" not in v: 
                         pesan_diag += f"❌ *{k.upper()}*: {v}\n"
                 pesan_diag += f"\n_Bot otomatis menggunakan fallback estimasi. Harap pantau server._"
 
-            # KIRIM LAPORAN UTAMA, 3 GAMBAR, & DIAGNOSTIK KE TELEGRAM
             send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
             print(f"[*] Pesan Telegram terkirim. Alasan: {alasan_kirim}")
         else:
-            print(f"[*] SILENT MODE AKTIF: Harga stabil dan sinyal tidak berubah. Durasi eksekusi: {time.time() - start_time:.1f} detik.")
+            print(f"[*] SILENT MODE AKTIF: Harga stabil. Bot menunggu laporan terjadwal. Eksekusi: {time.time() - start_time:.1f} dtk.")
 
     except Exception as fatal_e:
         pesan_fatal = f"🚨 *BOT MATI MENDADAK (FATAL ERROR)* 🚨\n\nPenyebab: {str(fatal_e)}\nWaktu: {sekarang_wita.strftime('%H:%M WITA')}"
