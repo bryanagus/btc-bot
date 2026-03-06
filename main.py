@@ -1,11 +1,11 @@
 # ==============================================================================
 # BTC QUANT GODMODE PRO MAX - THE HYBRID ARBITRAGE EDITION
 # Fitur: Fast Backoff, Auto-Risk, Monte Carlo, Kelly Sizing, 3 Full Charts
-# Laporan: Rapi, Mudah Dimengerti, Smart Diagnostic, Persentase Perubahan
+# Laporan: Rapi, Mudah Dimengerti, Smart Diagnostic, Persentase Perubahan, Saran Eksekusi
+# AI Upgrade: Log Returns, Bollinger Squeeze, Normalized ATR
+# PRO Upgrade (Tier 1 & 3): Fear & Greed API + Hyperparameter Tuning AI
 # Sensor Waktu: Presisi Cronjob 10 Menitan (Jendela menit 05-19)
 # Evaluasi Murni: USD Global (Yahoo Finance) agar AI tidak bingung.
-# Monitor Kasir: Rupiah (Indodax IDR) + Deteksi Selisih Harga (Spread)
-# Output Web3: 3 Gambar (PNG+WebP) & dashboard_data.json Hybrid
 # ==============================================================================
 import pandas as pd
 import numpy as np
@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 import time
 import csv
 import json
-import pickle # Tambahan untuk menyimpan model AI (Hemat Kuota)
+import pickle
 from datetime import datetime
 
 # Import Library ML dan Finance
@@ -40,10 +40,9 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 HISTORY_FILE = "ai_history_log.csv" 
 WEB_DATA_FILE = "dashboard_data.json"
-ALERT_FILE = "last_alert_state.json" # Tambahan untuk Silent Mode
+ALERT_FILE = "last_alert_state.json"
 # ===============================================
 
-# Global Diagnostics Dictionary
 diagnostics = {
     "api": "✅ Normal (API Terhubung)",
     "csv": "✅ Sinkron (Hybrid Format Terbaca)",
@@ -62,34 +61,39 @@ def format_usd(angka):
     return f"${angka:,.2f}"
 
 # ------------------------------------------------------------------------------
-# 1. MODUL FETCH DATA & NEWS (HYBRID & UTC ENGINE)
+# 1. MODUL FETCH DATA & NEWS (HYBRID, UTC ENGINE, ALTERNATIVE DATA)
 # ------------------------------------------------------------------------------
+def fetch_fear_and_greed():
+    """ Mengambil Data Psikologi Pasar Dunia (Fear & Greed Index) """
+    try:
+        resp = requests.get("https://api.alternative.me/fng/?limit=100", timeout=10).json()
+        fng_dict = {pd.to_datetime(x['timestamp'], unit='s', utc=True).date(): float(x['value']) for x in resp['data']}
+        return fng_dict
+    except Exception as e:
+        diagnostics["api"] = diagnostics["api"].replace("✅ Normal", "🟡 Peringatan") + " | 🟡 F&G API Gagal"
+        return {}
+
 def fetch_data_with_retry(period='90d', interval='1h'):
     print("[*] Mencoba menarik data Hybrid dengan Fast Backoff...")
     delays = [5, 15, 30, 60]
     
     for attempt, delay in enumerate(delays + [0]):
         try:
-            # 1. Tarik Data Global (USD)
             df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
             if isinstance(df.columns, pd.MultiIndex): 
                 df.columns = df.columns.droplevel(1)
             
-            # THE ULTIMATE FIX: Biarkan df.index murni UTC (Jangan di-convert ke WITA di sini)
             df.index = pd.to_datetime(df.index, utc=True)
             
-            # 2. Tarik Kurs Dollar ke Rupiah (Real-time)
             idr_data = yf.download('IDR=X', period='5d', progress=False)
             if isinstance(idr_data.columns, pd.MultiIndex): 
                 idr_data.columns = idr_data.columns.droplevel(1)
             kurs_idr = float(idr_data['Close'].dropna().iloc[-1])
             
-            # 3. Tarik Harga Pasar Lokal (Indodax) dengan Fallback Anti-Crash
             try:
                 indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=10).json()
                 indodax_live_idr = float(indodax_req['ticker']['last'])
             except Exception as e:
-                # Fallback jika API Indodax Maintenance
                 indodax_live_idr = float(df['Close'].iloc[-1]) * kurs_idr
                 diagnostics["api"] = "🟡 Ticker Indodax Down (Menggunakan Estimasi Kurs)"
             
@@ -102,7 +106,6 @@ def fetch_data_with_retry(period='90d', interval='1h'):
             time.sleep(delay)
 
 def fetch_indodax_depth():
-    """ Mengambil data tebalnya tembok Order Book Indodax """
     try:
         resp = requests.get('https://indodax.com/api/depth/btcidr', timeout=10).json()
         limit_buy = min(15, len(resp.get('buy', [])))
@@ -142,9 +145,9 @@ def fetch_crypto_news_sentiment():
         return "BERITA TIDAK TERSEDIA ⚪"
 
 # ------------------------------------------------------------------------------
-# 2. FEATURE ENGINEERING (FULL INDICATORS)
+# 2. FEATURE ENGINEERING (ADVANCED QUANT INDICATORS + F&G INJECTION)
 # ------------------------------------------------------------------------------
-def engineer_features(df):
+def engineer_features(df, fng_dict):
     df = df.copy() 
     
     df['MA_50'] = df['Close'].rolling(window=50).mean()
@@ -191,14 +194,28 @@ def engineer_features(df):
     df["Momentum_Accel"] = df["Return_1H"].diff()
     df["Regime"] = np.where(df["EMA20"] > df["EMA50"], 1, 0)
     
+    # Advanced Quant Features
+    df["Log_Return"] = np.log(df["Close"] / df["Close"].shift(1))
+    df["BB_Width"] = (df["BB_Upper"] - df["BB_Lower"]) / df["BB_Middle"]
+    df["ATR_Ratio"] = df["ATR"] / df["Close"]
+    
+    # Injection Fear & Greed ke Data AI
+    df['Date_Only'] = df.index.date
+    df['FnG_Index'] = df['Date_Only'].map(fng_dict)
+    df['FnG_Index'] = df['FnG_Index'].ffill().bfill().fillna(50.0) 
+    df.drop(columns=['Date_Only'], inplace=True)
+
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    features_cols = ["EMA_Spread", "RSI", "MACD_Hist", "Return_1H", "Volatility", "Trend_Slope", "Momentum_Accel", "Regime", "ADX"]
+    features_cols = [
+        "EMA_Spread", "RSI", "MACD_Hist", "Log_Return", "Volatility", 
+        "Trend_Slope", "Momentum_Accel", "Regime", "ADX", "BB_Width", "ATR_Ratio", "FnG_Index"
+    ]
     return df, features_cols
 
 # ------------------------------------------------------------------------------
-# 3. MODUL AI JUJUR DENGAN CACHING (HEMAT KUOTA & CEPAT)
+# 3. MODUL AI JUJUR DENGAN CACHING & TIER 3 HYPERPARAMETER TUNING
 # ------------------------------------------------------------------------------
 def train_honest_model(df, features, target_col, shift_len, model_name):
     model_file = f"ai_model_{model_name}.pkl"
@@ -206,7 +223,7 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
     
     if os.path.exists(model_file):
         file_age = time.time() - os.path.getmtime(model_file)
-        if file_age < 86400: # 86400 detik = 24 jam
+        if file_age < 86400:
             need_training = False
             
     X_live = df[features].iloc[-1:].fillna(0).values
@@ -226,7 +243,7 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
             need_training = True
 
     if need_training:
-        print(f"[*] Melatih ulang Otak AI ({model_name})... Proses berat!")
+        print(f"[*] Melatih ulang Otak AI ({model_name}) dengan Tier 3 Tuning...")
         train_df = df.iloc[: -(shift_len + 1)].dropna(subset=features + [target_col])
         X_train = train_df[features].values
         y_train = train_df[target_col].values
@@ -235,13 +252,15 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         X_train_scaled = scaler.fit_transform(X_train)
         X_live_scaled = scaler.transform(X_live)
 
-        lr_cal = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
+        # AI Tuning Parameters
+        lr_base = LogisticRegression(class_weight='balanced', max_iter=200, random_state=42)
+        lr_cal = CalibratedClassifierCV(lr_base, method="sigmoid", cv=3)
         lr_cal.fit(X_train_scaled, y_train)
         
-        rf = RandomForestClassifier(n_estimators=100, random_state=42)
+        rf = RandomForestClassifier(n_estimators=150, max_depth=10, min_samples_split=5, class_weight='balanced', random_state=42, n_jobs=-1)
         rf.fit(X_train_scaled, y_train)
         
-        gb = GradientBoostingClassifier(random_state=42)
+        gb = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=42)
         gb.fit(X_train_scaled, y_train)
         
         with open(model_file, 'wb') as f:
@@ -279,8 +298,8 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
     target_time_1h = current_time + pd.Timedelta(hours=1)
     target_time_6h = current_time + pd.Timedelta(hours=6)
     
-    eval_1h_msg = "Menunggu data..."
-    eval_6h_msg = "Menunggu data..."
+    eval_1h_msg = "Menunggu..."
+    eval_6h_msg = "Menunggu..."
     risk_multiplier = 1.0 
     
     file_exists = os.path.isfile(HISTORY_FILE)
@@ -289,7 +308,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
         try:
             with open(HISTORY_FILE, 'r') as f:
                 header = f.readline()
-            if 'usd_start_price' not in header:
+            if 'FnG_Index' not in header and 'usd_start_price' not in header:
                 os.remove(HISTORY_FILE)
                 file_exists = False
         except: pass
@@ -311,9 +330,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
-                        hasil = f"BENAR ✅ (Global {arah_asli})"
+                        hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
-                        hasil = f"SALAH ❌ (Global {arah_asli})"
+                        hasil = f"SALAH ❌ (Realita: {arah_asli})"
                         
                     history.loc[idx, 'result_1h'] = hasil
                     history.loc[idx, 'usd_end_price_1h'] = actual_end_price
@@ -331,9 +350,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
-                        hasil = f"BENAR ✅ (Global {arah_asli})"
+                        hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
-                        hasil = f"SALAH ❌ (Global {arah_asli})"
+                        hasil = f"SALAH ❌ (Realita: {arah_asli})"
                         
                     history.loc[idx, 'result_6h'] = hasil
                     history.loc[idx, 'usd_end_price_6h'] = actual_end_price
@@ -465,7 +484,7 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         diagnostics["web3"] = f"❌ Gagal Export JSON: {e}"
 
 # ------------------------------------------------------------------------------
-# 6. RISK MANAGEMENT & 3 VISUALIZATION FULL (ANTI MEMORY-LEAK)
+# 6. RISK MANAGEMENT & VISUALISASI
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=1, sims=2000):
     paths = []
@@ -627,8 +646,10 @@ def main():
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
     
     try:
+        # Panggil Fetch Data & Fear Greed Index
+        fng_dict = fetch_fear_and_greed()
         df, kurs_idr, indodax_live_idr = fetch_data_with_retry()
-        df, features = engineer_features(df)
+        df, features = engineer_features(df, fng_dict)
         
         buy_wall, sell_wall = fetch_indodax_depth()
         
@@ -665,11 +686,36 @@ def main():
             
         arah_1h = get_arah(prob_1h)
         arah_6h = get_arah(prob_6h)
+
+        # LOGIKA SARAN EKSEKUSI (BELI/JUAL/TAHAN)
+        fng_val = df['FnG_Index'].iloc[-1]
+        saran_tindakan = ""
+        alasan_saran = ""
         
-        if prob_1h > 0.5 and prob_6h > 0.5: kesimpulan = "Tren Utama NAIK, Jangka Pendek NAIK (STRONG BUY)."
-        elif prob_1h <= 0.5 and prob_6h > 0.5: kesimpulan = "Koreksi TURUN di Tren NAIK (BUY THE DIP)."
-        elif prob_1h > 0.5 and prob_6h <= 0.5: kesimpulan = "Pantulan NAIK Sementara di Tren TURUN (SELL ON STRENGTH)."
-        else: kesimpulan = "Kompak TURUN (STRONG SELL / WAIT)."
+        # Kondisi 1: Bullish Kuat + Indodax Diskon (Momen Emas Masuk)
+        if prob_1h > 0.5 and prob_6h > 0.5 and spread_premium <= 0 and fng_val < 75:
+            saran_tindakan = "🟢 STRONG BUY (BELI SEKARANG)"
+            alasan_saran = "AI memprediksi tren global NAIK kuat, dan harga di Indodax saat ini SEDANG DISKON (lebih murah dari global). Ini adalah titik masuk (*entry*) yang sangat ideal."
+        # Kondisi 2: Bullish tapi Indodax Sangat Mahal (Premium Tinggi)
+        elif prob_1h > 0.5 and prob_6h > 0.5 and spread_premium > (global_idr_converted * 0.005):
+            saran_tindakan = "🟡 TAHAN / JUAL SEBAGIAN (TAKE PROFIT)"
+            alasan_saran = "Meski tren global diprediksi NAIK, harga di Indodax saat ini SANGAT MAHAL (Premium tinggi). Daripada beli di pucuk lokal, lebih bijak merealisasikan keuntungan (*take profit*) sebagian."
+        # Kondisi 3: Bearish Kuat + Indodax Mahal (Waktunya Kabur)
+        elif prob_1h <= 0.5 and prob_6h <= 0.5 and spread_premium > 0:
+            saran_tindakan = "🔴 STRONG SELL (JUAL SEGERA)"
+            alasan_saran = "AI memprediksi tren global TURUN tajam, namun harga Indodax saat ini masih ditawar mahal (Premium). Manfaatkan jeda harga ini untuk JUAL sebelum harga lokal ikut runtuh."
+        # Kondisi 4: Bearish tapi Indodax Diskon (Tunggu Jemput Bawah)
+        elif prob_1h <= 0.5 and prob_6h <= 0.5 and spread_premium < 0:
+            saran_tindakan = "⚪ WAIT AND SEE (JANGAN BELI DULU)"
+            alasan_saran = "Memang harga Indodax sedang diskon, tapi AI memprediksi harga global MASIH AKAN TURUN. Tahan peluru (*cash*) Anda, kita tunggu harga di titik dasar (*bottom*)."
+        # Kondisi 5: Sideways / Ragu-ragu
+        else:
+            saran_tindakan = "⚪ NETRAL / TAHAN POSISI"
+            alasan_saran = "Sinyal jangka pendek dan tren menengah sedang bertabrakan (pasar ragu-ragu). Tidak disarankan membuka posisi besar saat ini. Pantau pergerakan harga selanjutnya."
+
+        # Peringatan F&G Ekstrem
+        if fng_val >= 75:
+            alasan_saran += "\n_⚠️ Peringatan: Pasar sedang Sangat Serakah (Extreme Greed). Waspada potensi bandar membanting harga tiba-tiba._"
 
         if buy_wall > sell_wall:
             status_orderbook = f"Tembok Beli Kuat 🟢 ({(buy_wall/sell_wall if sell_wall>0 else 1):.1f}x lipat dari Jual)"
@@ -725,13 +771,13 @@ def main():
                     kirim_telegram = True
                     alasan_kirim = f"Pergerakan Harga Drastis"
                 
-                # Syarat 2: Kesimpulan Sinyal AI Berubah
-                elif kesimpulan != last_state.get('signal', ''):
+                # Syarat 2: Saran Eksekusi Berubah (Lebih berguna daripada hanya sinyal arah AI)
+                elif saran_tindakan != last_state.get('saran', ''):
                     if selisih_waktu < 3600: 
                         kirim_telegram = False 
                     else:
                         kirim_telegram = True
-                        alasan_kirim = f"Perubahan Arah Sinyal AI"
+                        alasan_kirim = f"Perubahan Rekomendasi Jual/Beli"
                 
                 # Syarat 3: Laporan Rutin Cronjob 10-Menitan (Trigger jika menit antara 05 s/d 19)
                 elif 5 <= menit_sekarang < 20 and last_hourly_report != waktu_sekarang_str:
@@ -751,18 +797,24 @@ def main():
         plot_dashboard_indicators(df, "chart_indicators")
         
         if kirim_telegram:
-            # Simpan State Baru
             new_last_hourly = waktu_sekarang_str if is_routine_update else last_state.get('last_hourly_report', '')
             with open(ALERT_FILE, 'w') as f:
                 json.dump({
                     'price': global_usd,
-                    'signal': kesimpulan,
+                    'signal': kesimpulan, # Tetap disimpan untuk kompatibilitas
+                    'saran': saran_tindakan, # Disimpan untuk trigger jika berubah
                     'time': time.time(),
                     'last_hourly_report': new_last_hourly
                 }, f)
 
+            if fng_val >= 75: fng_str = f"{int(fng_val)} (Sangat Serakah 🤑)"
+            elif fng_val >= 55: fng_str = f"{int(fng_val)} (Serakah 😋)"
+            elif fng_val <= 25: fng_str = f"{int(fng_val)} (Sangat Takut 😱)"
+            elif fng_val <= 45: fng_str = f"{int(fng_val)} (Takut 😨)"
+            else: fng_str = f"{int(fng_val)} (Netral 😐)"
+
             # ============================================================
-            # FORMAT LAPORAN TELEGRAM LENGKAP & RAPI (DENGAN PERSENTASE)
+            # FORMAT LAPORAN TELEGRAM LENGKAP & RAPI 
             # ============================================================
             pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
             pesan_utama += f"📅 {sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}\n"
@@ -777,34 +829,32 @@ def main():
             
             if spread_premium > 0:
                 pesan_utama += f"• Selisih Indodax: {format_rupiah(abs(spread_premium))} (Lebih Mahal)\n"
-                pesan_utama += f"💡 _Tip: Jual di Indodax lebih untung (Harga Premium)._\n\n"
             else:
                 pesan_utama += f"• Selisih Indodax: {format_rupiah(abs(spread_premium))} (Lebih Murah)\n"
-                pesan_utama += f"💡 _Tip: Beli di Indodax sedang menguntungkan (Harga Diskon)._\n\n"
                 
-            pesan_utama += f"🧱 *KONDISI PASAR LOKAL*\n"
-            pesan_utama += f"• Orderbook (Antrean): {status_orderbook}\n\n"
+            pesan_utama += f"• Kondisi Pasar: {status_orderbook}\n\n"
             
             pesan_utama += f"🤖 *PREDIKSI AI (MACHINE LEARNING)*\n"
             pesan_utama += f"*1 Jam Kedepan (Taktis)*\n"
             pesan_utama += f"• Arah AI: *{arah_1h}* (Keyakinan: {prob_1h*100:.1f}%)\n"
-            pesan_utama += f"• Rapor AI 1 Jam Lalu: {eval_1h}\n\n"
+            pesan_utama += f"• Akurasi 1 Jam Lalu: {eval_1h}\n\n"
             
             pesan_utama += f"*6 Jam Kedepan (Tren)*\n"
             pesan_utama += f"• Arah AI: *{arah_6h}* (Keyakinan: {prob_6h*100:.1f}%)\n"
-            pesan_utama += f"• Rapor AI 6 Jam Lalu: {eval_6h}\n\n"
+            pesan_utama += f"• Akurasi 6 Jam Lalu: {eval_6h}\n\n"
             
-            pesan_utama += f"🚦 *KESIMPULAN & REKOMENDASI AI*\n"
-            pesan_utama += f"_{kesimpulan}_\n\n"
-            
-            pesan_utama += f"🛡️ *MANAJEMEN RISIKO*\n"
+            pesan_utama += f"🛡️ *INDIKATOR & SENTIMEN TERKINI*\n"
             if risk_mult < 1.0:
-                pesan_utama += f"⚠️ *STATUS:* REM DARURAT AKTIF (Akurasi Bot Sedang Menurun)\n"
-            pesan_utama += f"• Alokasi Modal Aman: Maksimal *{exposure}%* dari total saldo.\n"
-            pesan_utama += f"• Batas Apes (Stop Loss 95%): {format_rupiah(var95_idr)}\n"
-            pesan_utama += f"• Tren Global (ADX): {tren_status}\n"
+                pesan_utama += f"⚠️ *STATUS:* REM DARURAT AKTIF (Akurasi Bot Menurun)\n"
+            pesan_utama += f"• Alokasi Dana Aman: Maksimal *{exposure}%* dari portofolio.\n"
+            pesan_utama += f"• Stop Loss (95% Aman): {format_rupiah(var95_idr)}\n"
             pesan_utama += f"• Posisi Bandar (VWAP): {vwap_status}\n"
-            pesan_utama += f"• Sentimen Berita Terkini: {news_status}"
+            pesan_utama += f"• Psikologi Pasar Dunia: {fng_str}\n\n"
+            
+            # BAGIAN BARU: SARAN EKSEKUSI
+            pesan_utama += f"🎯 *KESIMPULAN & SARAN TINDAKAN*\n"
+            pesan_utama += f"*{saran_tindakan}*\n"
+            pesan_utama += f"_{alasan_saran}_"
 
             # ============================================================
             # PEMBUATAN PESAN DIAGNOSTIK (SMART ALERT: HANYA JIKA ERROR)
