@@ -58,7 +58,7 @@ def format_usd(angka):
     return f"${angka:,.2f}"
 
 # ------------------------------------------------------------------------------
-# 1. MODUL FETCH DATA & NEWS (HYBRID)
+# 1. MODUL FETCH DATA & NEWS (HYBRID & UTC ENGINE)
 # ------------------------------------------------------------------------------
 def fetch_data_with_retry(period='90d', interval='1h'):
     print("[*] Mencoba menarik data Hybrid dengan Fast Backoff...")
@@ -70,9 +70,10 @@ def fetch_data_with_retry(period='90d', interval='1h'):
             df = yf.download('BTC-USD', period=period, interval=interval, progress=False)
             if isinstance(df.columns, pd.MultiIndex): 
                 df.columns = df.columns.droplevel(1)
+            
+            # THE ULTIMATE FIX: Biarkan df.index murni UTC (Jangan di-convert ke WITA di sini)
             if df.index.tzinfo is None: 
                 df.index = df.index.tz_localize('UTC')
-            df.index = df.index.tz_convert('Asia/Makassar')
             
             # 2. Tarik Kurs Dollar ke Rupiah (Real-time)
             idr_data = yf.download('IDR=X', period='5d', progress=False)
@@ -80,15 +81,20 @@ def fetch_data_with_retry(period='90d', interval='1h'):
                 idr_data.columns = idr_data.columns.droplevel(1)
             kurs_idr = float(idr_data['Close'].dropna().iloc[-1])
             
-            # 3. Tarik Harga Pasar Lokal (Indodax)
-            indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=10).json()
-            indodax_live_idr = float(indodax_req['ticker']['last'])
+            # 3. Tarik Harga Pasar Lokal (Indodax) dengan Fallback Anti-Crash
+            try:
+                indodax_req = requests.get('https://indodax.com/api/ticker/btcidr', timeout=10).json()
+                indodax_live_idr = float(indodax_req['ticker']['last'])
+            except Exception as e:
+                # Fallback jika API Indodax Maintenance
+                indodax_live_idr = float(df['Close'].iloc[-1]) * kurs_idr
+                diagnostics["api"] = "🟡 Ticker Indodax Down (Menggunakan Estimasi Kurs)"
             
             return df, kurs_idr, indodax_live_idr
             
         except Exception as e:
             if attempt == len(delays):
-                diagnostics["api"] = "❌ Gagal Terhubung (Server API Down)"
+                diagnostics["api"] = "❌ Gagal Terhubung (Server API Global Down)"
                 raise Exception(f"API Timeout: {e}")
             time.sleep(delay)
 
@@ -122,6 +128,8 @@ def fetch_crypto_news_sentiment():
 # 2. FEATURE ENGINEERING (FULL INDICATORS)
 # ------------------------------------------------------------------------------
 def engineer_features(df):
+    df = df.copy() # Anti-Warning pandas (SettingWithCopyWarning)
+    
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
@@ -174,7 +182,7 @@ def engineer_features(df):
     return df, features_cols
 
 # ------------------------------------------------------------------------------
-# 3. MODUL AI JUJUR
+# 3. MODUL AI JUJUR (ENSEMBLE)
 # ------------------------------------------------------------------------------
 def train_honest_model(df, features, target_col, shift_len):
     train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
@@ -202,9 +210,33 @@ def train_honest_model(df, features, target_col, shift_len):
     return (prob_lr + prob_rf + prob_gb) / 3
 
 # ------------------------------------------------------------------------------
-# 4. DATABASE HYBRID & EVALUASI MURNI USD
+# 4. DATABASE HYBRID, AUTO-HEALING & LAZY FETCHING INDODAX
 # ------------------------------------------------------------------------------
+def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
+    """
+    LAZY FETCHING (Jalur B): Ambil riwayat grafik Indodax via API Tradingview.
+    Jika gagal/terblokir, pakai rasio premium sebagai estimasi matematis yang wajar.
+    """
+    try:
+        t_unix = int(t_target_utc.timestamp())
+        # Ambil data dari 1 jam sebelum sampai 1 jam sesudah target unix
+        url = f"https://indodax.com/tradingview/history?symbol=BTCIDR&resolution=60&from={t_unix-3600}&to={t_unix+3600}"
+        resp = requests.get(url, timeout=10).json()
+        if resp.get('s') == 'ok':
+            times = resp.get('t', [])
+            closes = resp.get('c', [])
+            for i, ts in enumerate(times):
+                if ts == t_unix:
+                    return float(closes[i])
+    except:
+        pass
+    
+    # Fallback jika API Riwayat Gagal: Rasio Premium
+    past_ratio = past_idr / past_usd
+    return actual_usd * past_ratio
+
 def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr):
+    # current_time SEKARANG 100% UTC (Global Time)
     current_time = df.index[-1]
     usd_live_price = float(df['Close'].iloc[-1])
     target_time_1h = current_time + pd.Timedelta(hours=1)
@@ -230,50 +262,67 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
     try:
         if file_exists:
             history = pd.read_csv(HISTORY_FILE)
-            #history['target_1h'] = pd.to_datetime(history['target_1h'], utc=True).dt.tz_convert('Asia/Makassar')
-            #history['target_6h'] = pd.to_datetime(history['target_6h'], utc=True).dt.tz_convert('Asia/Makassar')
-            history['target_1h'] = pd.to_datetime(history['target_1h'], format='ISO8601', utc=True).dt.tz_convert('Asia/Makassar')
-            history['target_6h'] = pd.to_datetime(history['target_6h'], format='ISO8601', utc=True).dt.tz_convert('Asia/Makassar')
             
-            # --- EVALUASI 1 JAM (HANYA MENGGUNAKAN USD GLOBAL) ---
-            row_1h = history[history['target_1h'] == current_time]
-            if not row_1h.empty:
-                past_prob = row_1h['prob_1h'].values[0]
-                past_usd_price = float(row_1h['usd_start_price'].values[0])
-                arah_pred = "NAIK" if past_prob > 0.5 else "TURUN"
-                arah_asli = "Naik" if usd_live_price > past_usd_price else "Turun"
-                
-                # Penilaian Murni USD
-                if (past_prob > 0.5 and usd_live_price > past_usd_price) or (past_prob <= 0.5 and usd_live_price <= past_usd_price):
-                    eval_1h_msg = f"BENAR ✅ (Global {arah_asli})"
-                else:
-                    eval_1h_msg = f"SALAH ❌ (Global {arah_asli})"
+            # FORMAT MIXED + UTC TRUE: Solusi kebal error format waktu apapun
+            history['target_1h'] = pd.to_datetime(history['target_1h'], format='mixed', utc=True)
+            history['target_6h'] = pd.to_datetime(history['target_6h'], format='mixed', utc=True)
+            
+            # --- EVALUASI 1 JAM (AUTO-HEALING MASA LALU YANG BOLONG) ---
+            # Cari semua baris yang targetnya <= sekarang DAN hasilnya kosong
+            mask_1h = (history['target_1h'] <= current_time) & (history['result_1h'].isna())
+            for idx, row in history[mask_1h].iterrows():
+                t_target = row['target_1h']
+                if t_target in df.index:
+                    past_prob = float(row['prob_1h'])
+                    past_usd_price = float(row['usd_start_price'])
+                    past_idr_price = float(row['idr_start_price'])
+                    actual_end_price = float(df.loc[t_target, 'Close'])
                     
-                # Simpan Hasil Evaluasi
-                history.loc[history['target_1h'] == current_time, 'result_1h'] = eval_1h_msg
-                history.loc[history['target_1h'] == current_time, 'usd_end_price_1h'] = usd_live_price
-                history.loc[history['target_1h'] == current_time, 'idr_end_price_1h'] = indodax_live_idr
+                    arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
+                    if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
+                        hasil = f"BENAR ✅ (Global {arah_asli})"
+                    else:
+                        hasil = f"SALAH ❌ (Global {arah_asli})"
+                        
+                    history.loc[idx, 'result_1h'] = hasil
+                    history.loc[idx, 'usd_end_price_1h'] = actual_end_price
+                    
+                    if t_target == current_time:
+                        # Bot Tepat Waktu: Pakai Indodax Real-time
+                        history.loc[idx, 'idr_end_price_1h'] = indodax_live_idr
+                        eval_1h_msg = hasil
+                    else:
+                        # Bot Telat: Panggil fungsi Lazy Fetching Indodax
+                        history.loc[idx, 'idr_end_price_1h'] = get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
 
-            # --- EVALUASI 6 JAM (HANYA MENGGUNAKAN USD GLOBAL) ---
-            row_6h = history[history['target_6h'] == current_time]
-            if not row_6h.empty:
-                past_prob = row_6h['prob_6h'].values[0]
-                past_usd_price = float(row_6h['usd_start_price'].values[0])
-                arah_pred = "NAIK" if past_prob > 0.5 else "TURUN"
-                arah_asli = "Naik" if usd_live_price > past_usd_price else "Turun"
-                
-                if (past_prob > 0.5 and usd_live_price > past_usd_price) or (past_prob <= 0.5 and usd_live_price <= past_usd_price):
-                    eval_6h_msg = f"BENAR ✅ (Global {arah_asli})"
-                else:
-                    eval_6h_msg = f"SALAH ❌ (Global {arah_asli})"
+            # --- EVALUASI 6 JAM (AUTO-HEALING MASA LALU YANG BOLONG) ---
+            mask_6h = (history['target_6h'] <= current_time) & (history['result_6h'].isna())
+            for idx, row in history[mask_6h].iterrows():
+                t_target = row['target_6h']
+                if t_target in df.index:
+                    past_prob = float(row['prob_6h'])
+                    past_usd_price = float(row['usd_start_price'])
+                    past_idr_price = float(row['idr_start_price'])
+                    actual_end_price = float(df.loc[t_target, 'Close'])
                     
-                history.loc[history['target_6h'] == current_time, 'result_6h'] = eval_6h_msg
-                history.loc[history['target_6h'] == current_time, 'usd_end_price_6h'] = usd_live_price
-                history.loc[history['target_6h'] == current_time, 'idr_end_price_6h'] = indodax_live_idr
+                    arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
+                    if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
+                        hasil = f"BENAR ✅ (Global {arah_asli})"
+                    else:
+                        hasil = f"SALAH ❌ (Global {arah_asli})"
+                        
+                    history.loc[idx, 'result_6h'] = hasil
+                    history.loc[idx, 'usd_end_price_6h'] = actual_end_price
+                    
+                    if t_target == current_time:
+                        history.loc[idx, 'idr_end_price_6h'] = indodax_live_idr
+                        eval_6h_msg = hasil
+                    else:
+                        history.loc[idx, 'idr_end_price_6h'] = get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
 
             history.to_csv(HISTORY_FILE, index=False)
 
-            # AUTO RISK CALCULATION DARI EVALUASI USD
+            # AUTO RISK CALCULATION
             recent_1h = history.dropna(subset=['result_1h']).tail(5)
             if len(recent_1h) >= 3:
                 benar_count = recent_1h['result_1h'].str.contains('BENAR').sum()
@@ -283,11 +332,15 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                 else: risk_multiplier = 1.0                  
                 
     except Exception as e:
-        diagnostics["csv"] = f"❌ Error Baca CSV: {e}"
+        diagnostics["csv"] = f"❌ Error Baca/Update CSV: {e}"
         risk_multiplier = 1.0
 
-    # SIMPAN PREDIKSI BARU KE DALAM CSV (FORMAT HYBRID)
+    # SIMPAN PREDIKSI BARU KE DALAM CSV (FORMAT UTC MURNI - ISO 8601)
     try:
+        t_curr_str = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        t_1h_str = target_time_1h.strftime('%Y-%m-%dT%H:%M:%SZ')
+        t_6h_str = target_time_6h.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
         with open(HISTORY_FILE, mode='a', newline='') as file:
             writer = csv.writer(file)
             if not file_exists:
@@ -297,17 +350,17 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     'target_6h', 'prob_6h', 'usd_end_price_6h', 'idr_end_price_6h', 'result_6h'
                 ])
             writer.writerow([
-                current_time.isoformat(), kurs_idr, usd_live_price, indodax_live_idr, 
-                target_time_1h.isoformat(), prob_1h, '', '', '', 
-                target_time_6h.isoformat(), prob_6h, '', '', ''
+                t_curr_str, kurs_idr, usd_live_price, indodax_live_idr, 
+                t_1h_str, prob_1h, '', '', '', 
+                t_6h_str, prob_6h, '', '', ''
             ])
     except:
-        diagnostics["csv"] = "❌ Gagal Menulis CSV"
+        diagnostics["csv"] = "❌ Gagal Menulis Baris Baru CSV"
 
     return eval_1h_msg, eval_6h_msg, risk_multiplier
 
 # ------------------------------------------------------------------------------
-# 5. GENERATE DATA WEB3 (HYBRID FORMAT)
+# 5. GENERATE DATA WEB3 (TAMPILAN DIUBAH KE LOKAL/WITA)
 # ------------------------------------------------------------------------------
 def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, prob_6h, df, risk_mult):
     global_idr_converted = global_usd * kurs_idr
@@ -320,9 +373,10 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         hist_1h = history.dropna(subset=['result_1h']).tail(100)
         table_1h = []
         for _, row in hist_1h.iterrows():
+            # Ubah UTC -> WITA Khusus untuk tampilan
+            waktu_local = pd.to_datetime(row['created_at'], format='mixed', utc=True).tz_convert('Asia/Makassar')
             table_1h.append({
-                #"waktu": pd.to_datetime(row['created_at']).strftime('%d %b %H:%M'),
-                "waktu": pd.to_datetime(row['created_at'], format='ISO8601').strftime('%d %b %H:%M'),
+                "waktu": waktu_local.strftime('%d %b %H:%M'),
                 "start_usd": row['usd_start_price'],
                 "end_usd": row['usd_end_price_1h'],
                 "start_idr": row['idr_start_price'],
@@ -335,9 +389,9 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         hist_6h = history.dropna(subset=['result_6h']).tail(100)
         table_6h = []
         for _, row in hist_6h.iterrows():
+            waktu_local = pd.to_datetime(row['created_at'], format='mixed', utc=True).tz_convert('Asia/Makassar')
             table_6h.append({
-                #"waktu": pd.to_datetime(row['created_at']).strftime('%d %b %H:%M'),
-                "waktu": pd.to_datetime(row['created_at'], format='ISO8601').strftime('%d %b %H:%M'),
+                "waktu": waktu_local.strftime('%d %b %H:%M'),
                 "start_usd": row['usd_start_price'],
                 "end_usd": row['usd_end_price_6h'],
                 "start_idr": row['idr_start_price'],
@@ -386,7 +440,7 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
         diagnostics["web3"] = f"❌ Gagal Export JSON: {e}"
 
 # ------------------------------------------------------------------------------
-# 6. RISK MANAGEMENT & 3 VISUALIZATION FULL
+# 6. RISK MANAGEMENT & 3 VISUALIZATION FULL (ANTI MEMORY-LEAK)
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation(price, vol, steps=1, sims=2000):
     paths = []
@@ -407,7 +461,11 @@ def position_sizing_kelly(prob_1h, prob_6h, atr, risk_multiplier):
     return round(size * 100, 2)
 
 def plot_professional_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_main"):
-    plot_data = df.tail(80) 
+    plt.clf() # Cegah Memory Leak
+    plot_data = df.tail(80).copy() 
+    # Tampilan Grafik Dikonversi ke WITA (Makassar)
+    plot_data.index = plot_data.index.tz_convert('Asia/Makassar')
+    
     plt.style.use('seaborn-v0_8-darkgrid')
     fig = plt.figure(figsize=(14, 8))
     
@@ -435,10 +493,13 @@ def plot_professional_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_m
     plt.savefig(f"{base_filename}.png", dpi=150)
     try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
     except: pass 
-    plt.close()
+    plt.close('all') # Bersihkan RAM total
 
 def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_zoom"):
-    plot_data = df.tail(12) 
+    plt.clf()
+    plot_data = df.tail(12).copy()
+    plot_data.index = plot_data.index.tz_convert('Asia/Makassar')
+    
     plt.style.use('seaborn-v0_8-darkgrid')
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
@@ -467,11 +528,14 @@ def plot_zoomed_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_zoom"):
     plt.savefig(f"{base_filename}.png", dpi=150)
     try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
     except: pass
-    plt.close()
+    plt.close('all')
 
 def plot_dashboard_indicators(df, base_filename="chart_indicators"):
     try:
-        plot_data = df.tail(80)
+        plt.clf()
+        plot_data = df.tail(80).copy()
+        plot_data.index = plot_data.index.tz_convert('Asia/Makassar')
+        
         plt.style.use('seaborn-v0_8-darkgrid')
         fig = plt.figure(figsize=(14, 16))
         gs = fig.add_gridspec(4, 1, height_ratios=[2, 1, 1, 1], hspace=0.3)
@@ -510,7 +574,7 @@ def plot_dashboard_indicators(df, base_filename="chart_indicators"):
         plt.savefig(f"{base_filename}.png", dpi=150)
         try: plt.savefig(f"{base_filename}.webp", format='webp', dpi=150)
         except: pass
-        plt.close()
+        plt.close('all')
     except Exception as e:
         diagnostics["chart"] = f"❌ Gagal Render Dashboard: {e}"
 
@@ -534,6 +598,7 @@ def send_telegram_messages(pesan_utama, chart_paths, pesan_diag):
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
+    # Tampilan Laporan Telegram selalu dikonversi ke Waktu Lokal (WITA)
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
     
     try:
@@ -558,13 +623,13 @@ def main():
         try: prob_6h = train_honest_model(df, features, "Target_6H", shift_len=6)
         except Exception as e: diagnostics["ai_6h"] = f"❌ Error 6H: {e}"; prob_6h = 0.5
 
-        # EVALUASI HYBRID (Evaluasi USD, Simpan IDR)
+        # EVALUASI HYBRID (Evaluasi USD, Simpan IDR - Auto Healing Active)
         eval_1h, eval_6h, risk_mult = manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr)
         
         # GENERATE JSON UNTUK WEB3
         generate_web3_dashboard_data(indodax_live_idr, global_usd, kurs_idr, prob_1h, prob_6h, df, risk_mult)
         
-        # PERHITUNGAN MONTE CARLO & KELLY (Dihidupkan Kembali)
+        # PERHITUNGAN MONTE CARLO & KELLY
         exposure = position_sizing_kelly(prob_1h, prob_6h, current_atr, risk_mult)
         exp_1h_usd, var95_usd = monte_carlo_simulation(global_usd, volatility, steps=1) 
         var95_idr = var95_usd * kurs_idr
@@ -585,7 +650,7 @@ def main():
 
         status_harga_lokal = "MAHAL 🔴 (Premium)" if spread_premium > 0 else "MURAH 🟢 (Discount)"
 
-        # LAPORAN TELEGRAM FULL (Sesuai Permintaan Arbitrage)
+        # LAPORAN TELEGRAM FULL
         pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
         pesan_utama += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
         
@@ -628,7 +693,7 @@ def main():
         pesan_diag += f"├ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik\n\n"
         pesan_diag += f"Status Global: {global_status}"
 
-        # KIRIM 3 GAMBAR KE TELEGRAM (Kembali ke sistem asal)
+        # KIRIM 3 GAMBAR KE TELEGRAM
         send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
 
     except Exception as fatal_e:
