@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 import time
 import csv
 import json
+import pickle # Tambahan untuk menyimpan model AI (Hemat Kuota)
 from datetime import datetime
 
 # Import Library ML dan Finance
@@ -37,6 +38,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 HISTORY_FILE = "ai_history_log.csv" 
 WEB_DATA_FILE = "dashboard_data.json"
+ALERT_FILE = "last_alert_state.json" # Tambahan untuk Silent Mode
 # ===============================================
 
 # Global Diagnostics Dictionary
@@ -97,6 +99,21 @@ def fetch_data_with_retry(period='90d', interval='1h'):
                 diagnostics["api"] = "❌ Gagal Terhubung (Server API Global Down)"
                 raise Exception(f"API Timeout: {e}")
             time.sleep(delay)
+
+def fetch_indodax_depth():
+    """ Mengambil data tebalnya tembok Order Book Indodax """
+    try:
+        resp = requests.get('https://indodax.com/api/depth/btcidr', timeout=10).json()
+        # AMAN DARI CRASH: Ambil maksimal 15, atau sebanyak yang tersedia
+        limit_buy = min(15, len(resp.get('buy', [])))
+        limit_sell = min(15, len(resp.get('sell', [])))
+        
+        buy_wall = sum([float(x[0]) * float(x[1]) for x in resp['buy'][:limit_buy]])
+        sell_wall = sum([float(x[0]) * float(x[1]) for x in resp['sell'][:limit_sell]])
+        return buy_wall, sell_wall
+    except Exception as e:
+        diagnostics["api"] += " | 🟡 Depth API Gagal"
+        return 0, 0
 
 def fetch_crypto_news_sentiment():
     try:
@@ -182,26 +199,56 @@ def engineer_features(df):
     return df, features_cols
 
 # ------------------------------------------------------------------------------
-# 3. MODUL AI JUJUR (ENSEMBLE)
+# 3. MODUL AI JUJUR DENGAN CACHING (HEMAT KUOTA & CEPAT)
 # ------------------------------------------------------------------------------
-def train_honest_model(df, features, target_col, shift_len):
-    train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
-    X_train = train_df[features].values
-    y_train = train_df[target_col].values
+def train_honest_model(df, features, target_col, shift_len, model_name):
+    model_file = f"ai_model_{model_name}.pkl"
+    need_training = True
+    
+    # Cek apakah otak AI sudah ada dan usianya di bawah 24 Jam
+    if os.path.exists(model_file):
+        file_age = time.time() - os.path.getmtime(model_file)
+        if file_age < 86400: # 86400 detik = 24 jam
+            need_training = False
+            
     X_live = df[features].iloc[-1:].fillna(0).values
 
-    lr = LogisticRegression()
-    rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    gb = GradientBoostingClassifier(random_state=42)
+    if not need_training:
+        try:
+            print(f"[*] Memanggil Otak AI yang sudah pintar ({model_name})... Cepat!")
+            with open(model_file, 'rb') as f:
+                models = pickle.load(f)
+            lr_cal = models['lr']
+            rf = models['rf']
+            gb = models['gb']
+            scaler = models['scaler']
+            X_live_scaled = scaler.transform(X_live)
+        except Exception as e:
+            print(f"[*] Gagal memanggil model lama, melatih ulang... ({e})")
+            need_training = True
 
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_live_scaled = scaler.transform(X_live)
+    if need_training:
+        print(f"[*] Melatih ulang Otak AI ({model_name})... Proses berat!")
+        train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
+        X_train = train_df[features].values
+        y_train = train_df[target_col].values
+        
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_live_scaled = scaler.transform(X_live)
 
-    lr_cal = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
-    lr_cal.fit(X_train_scaled, y_train)
-    rf.fit(X_train_scaled, y_train)
-    gb.fit(X_train_scaled, y_train)
+        lr_cal = CalibratedClassifierCV(LogisticRegression(), method="sigmoid", cv=3)
+        lr_cal.fit(X_train_scaled, y_train)
+        
+        rf = RandomForestClassifier(n_estimators=100, random_state=42)
+        rf.fit(X_train_scaled, y_train)
+        
+        gb = GradientBoostingClassifier(random_state=42)
+        gb.fit(X_train_scaled, y_train)
+        
+        # Simpan Otak AI ke file
+        with open(model_file, 'wb') as f:
+            pickle.dump({'lr': lr_cal, 'rf': rf, 'gb': gb, 'scaler': scaler}, f)
 
     prob_lr = lr_cal.predict_proba(X_live_scaled)[0,1]
     prob_rf = rf.predict_proba(X_live_scaled)[0,1]
@@ -341,19 +388,28 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
         t_1h_str = target_time_1h.strftime('%Y-%m-%dT%H:%M:%SZ')
         t_6h_str = target_time_6h.strftime('%Y-%m-%dT%H:%M:%SZ')
         
-        with open(HISTORY_FILE, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            if not file_exists:
+        # Mencegah Penulisan Baris Duplikat jika bot jalan tiap beberapa menit
+        is_duplicate = False
+        if file_exists:
+            try:
+                if len(history) > 0 and str(history['created_at'].iloc[-1]) == t_curr_str:
+                    is_duplicate = True
+            except: pass
+
+        if not is_duplicate:
+            with open(HISTORY_FILE, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                if not file_exists:
+                    writer.writerow([
+                        'created_at', 'kurs_usd_idr', 'usd_start_price', 'idr_start_price', 
+                        'target_1h', 'prob_1h', 'usd_end_price_1h', 'idr_end_price_1h', 'result_1h',
+                        'target_6h', 'prob_6h', 'usd_end_price_6h', 'idr_end_price_6h', 'result_6h'
+                    ])
                 writer.writerow([
-                    'created_at', 'kurs_usd_idr', 'usd_start_price', 'idr_start_price', 
-                    'target_1h', 'prob_1h', 'usd_end_price_1h', 'idr_end_price_1h', 'result_1h',
-                    'target_6h', 'prob_6h', 'usd_end_price_6h', 'idr_end_price_6h', 'result_6h'
+                    t_curr_str, kurs_idr, usd_live_price, indodax_live_idr, 
+                    t_1h_str, prob_1h, '', '', '', 
+                    t_6h_str, prob_6h, '', '', ''
                 ])
-            writer.writerow([
-                t_curr_str, kurs_idr, usd_live_price, indodax_live_idr, 
-                t_1h_str, prob_1h, '', '', '', 
-                t_6h_str, prob_6h, '', '', ''
-            ])
     except:
         diagnostics["csv"] = "❌ Gagal Menulis Baris Baru CSV"
 
@@ -606,6 +662,9 @@ def main():
         df, kurs_idr, indodax_live_idr = fetch_data_with_retry()
         df, features = engineer_features(df)
         
+        # Tarik data Order Book Depth (Tembok Indodax)
+        buy_wall, sell_wall = fetch_indodax_depth()
+        
         global_usd = float(df['Close'].iloc[-1])
         global_idr_converted = global_usd * kurs_idr
         spread_premium = indodax_live_idr - global_idr_converted
@@ -617,10 +676,11 @@ def main():
         tren_status = "Kuat" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways"
         vwap_status = "Aman (Harga di atas VWAP)" if global_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah VWAP)"
         
-        try: prob_1h = train_honest_model(df, features, "Target_1H", shift_len=1)
+        # Prediksi AI dengan parameter model_name untuk Caching
+        try: prob_1h = train_honest_model(df, features, "Target_1H", shift_len=1, model_name="1H")
         except Exception as e: diagnostics["ai_1h"] = f"❌ Error 1H: {e}"; prob_1h = 0.5
             
-        try: prob_6h = train_honest_model(df, features, "Target_6H", shift_len=6)
+        try: prob_6h = train_honest_model(df, features, "Target_6H", shift_len=6, model_name="6H")
         except Exception as e: diagnostics["ai_6h"] = f"❌ Error 6H: {e}"; prob_6h = 0.5
 
         # EVALUASI HYBRID (Evaluasi USD, Simpan IDR - Auto Healing Active)
@@ -649,52 +709,108 @@ def main():
         else: kesimpulan = "Kompak TURUN (STRONG SELL / WAIT)."
 
         status_harga_lokal = "MAHAL 🔴 (Premium)" if spread_premium > 0 else "MURAH 🟢 (Discount)"
+        
+        # Status Order Book Depth
+        if buy_wall > sell_wall:
+            status_orderbook = f"Tembok Beli Kuat 🟢 (Rasio {(buy_wall/sell_wall if sell_wall>0 else 1):.1f}x)"
+        else:
+            status_orderbook = f"Tembok Jual Kuat 🔴 (Rasio {(sell_wall/buy_wall if buy_wall>0 else 1):.1f}x)"
 
-        # LAPORAN TELEGRAM FULL
-        pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
-        pesan_utama += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
+        # ====================================================================
+        # SENSOR SILENT MODE (CEK APAKAH PERLU KIRIM TELEGRAM)
+        # ====================================================================
+        kirim_telegram = False
+        alasan_kirim = ""
         
-        pesan_utama += f"💰 *MONITOR HARGA (ARBITRASE):*\n"
-        pesan_utama += f"├ Global (USD): {format_usd(global_usd)}\n"
-        pesan_utama += f"├ Kurs Saat Ini: {format_rupiah(kurs_idr)} / USD\n"
-        pesan_utama += f"├ Nilai Asli (IDR): *{format_rupiah(global_idr_converted)}*\n"
-        pesan_utama += f"├ Pasar Indodax: *{format_rupiah(indodax_live_idr)}*\n"
-        pesan_utama += f"└ Selisih Indodax: {format_rupiah(abs(spread_premium))} -> *{status_harga_lokal}*\n\n"
-        
-        pesan_utama += f"🎯 *PREDIKSI TAKTIS (1 JAM):*\n"
-        pesan_utama += f"├ Arah (Global): *{arah_1h}* (Yakin {prob_1h*100:.1f}%)\n"
-        pesan_utama += f"└ Cek 1 Jam Lalu: {eval_1h}\n\n"
-        
-        pesan_utama += f"🔭 *PREDIKSI TREN (6 JAM):*\n"
-        pesan_utama += f"├ Arah (Global): *{arah_6h}* (Yakin {prob_6h*100:.1f}%)\n"
-        pesan_utama += f"└ Cek 6 Jam Lalu: {eval_6h}\n\n"
-        
-        pesan_utama += f"🚦 *KESIMPULAN SINYAL:*\n_{kesimpulan}_\n\n"
-        
-        pesan_utama += f"📊 *MANAJEMEN RISIKO:*\n"
-        if risk_mult < 1.0:
-            pesan_utama += f"├ ⚠️ *STATUS:* REM DARURAT AKTIF\n"
-        pesan_utama += f"├ Alokasi Modal Aman: Maksimal *{exposure}%* saldo.\n"
-        pesan_utama += f"├ Tren Global (ADX): {tren_status}\n"
-        pesan_utama += f"├ Posisi Bandar (VWAP): {vwap_status}\n"
-        pesan_utama += f"└ Batas Apes (SL 95%): {format_rupiah(var95_idr)}\n\n"
-        
-        pesan_utama += f"📰 *SENTIMEN BERITA:* {news_status}"
+        if not os.path.exists(ALERT_FILE):
+            kirim_telegram = True
+            alasan_kirim = "Bot Baru / Sistem Reset"
+        else:
+            try:
+                with open(ALERT_FILE, 'r') as f:
+                    last_state = json.load(f)
+                
+                price_diff = abs((global_usd - last_state.get('price', global_usd)) / last_state.get('price', global_usd)) * 100
+                selisih_waktu = time.time() - last_state.get('time', 0)
+                
+                # Syarat 1: Harga Gerak Ekstrem (> 1.5%)
+                if price_diff >= 1.5:
+                    kirim_telegram = True
+                    alasan_kirim = f"Pergerakan Harga Drastis: {price_diff:.2f}%"
+                # Syarat 2: Kesimpulan Sinyal AI Berubah
+                elif kesimpulan != last_state.get('signal', ''):
+                    kirim_telegram = True
+                    alasan_kirim = f"Perubahan Sinyal: {last_state.get('signal', 'N/A')} ➔ {kesimpulan}"
+                # Syarat 3: Laporan Wajib (Setiap 4 Jam sekali)
+                elif selisih_waktu >= 14400:
+                    kirim_telegram = True
+                    alasan_kirim = "Update Wajib Berkala (4 Jam)"
+                else:
+                    kirim_telegram = False
+            except Exception as e:
+                kirim_telegram = True
+                alasan_kirim = f"Reset State File Error: {e}"
 
-        # MENCETAK KEMBALI 3 GRAFIK LENGKAP (PNG & WEBP)
+        # MENCETAK KEMBALI 3 GRAFIK LENGKAP (PNG & WEBP) - Selalu dicetak untuk Web Dashboard
         plot_professional_analysis(df, prob_1h, prob_6h, current_atr, "chart_main")
         plot_zoomed_analysis(df, prob_1h, prob_6h, current_atr, "chart_zoom")
         plot_dashboard_indicators(df, "chart_indicators")
         
-        # PESAN DIAGNOSTIK
-        global_status = "🟢 *BOT BERJALAN NORMAL 100%*" if all("✅" in v for v in diagnostics.values()) else "🟡 *BERJALAN DENGAN PERINGATAN*"
-        pesan_diag = f"🛠️ *DIAGNOSTIK SISTEM HYBRID* 🛠️\n\n"
-        for k, v in diagnostics.items(): pesan_diag += f"├ {v}\n"
-        pesan_diag += f"├ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik\n\n"
-        pesan_diag += f"Status Global: {global_status}"
+        # JIKA LOLOS SENSOR, KIRIM KE TELEGRAM
+        if kirim_telegram:
+            # Update File Ingatan
+            with open(ALERT_FILE, 'w') as f:
+                json.dump({
+                    'price': global_usd,
+                    'signal': kesimpulan,
+                    'time': time.time()
+                }, f)
 
-        # KIRIM 3 GAMBAR KE TELEGRAM
-        send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
+            # LAPORAN TELEGRAM FULL
+            pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
+            pesan_utama += f"_{sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}_\n\n"
+            
+            pesan_utama += f"💰 *MONITOR HARGA (ARBITRASE):*\n"
+            pesan_utama += f"├ Global (USD): {format_usd(global_usd)}\n"
+            pesan_utama += f"├ Kurs Saat Ini: {format_rupiah(kurs_idr)} / USD\n"
+            pesan_utama += f"├ Nilai Asli (IDR): *{format_rupiah(global_idr_converted)}*\n"
+            pesan_utama += f"├ Pasar Indodax: *{format_rupiah(indodax_live_idr)}*\n"
+            pesan_utama += f"├ Selisih Indodax: {format_rupiah(abs(spread_premium))} -> *{status_harga_lokal}*\n"
+            pesan_utama += f"└ *Order Book (Top 15):* {status_orderbook}\n\n"
+            
+            pesan_utama += f"🎯 *PREDIKSI TAKTIS (1 JAM):*\n"
+            pesan_utama += f"├ Arah (Global): *{arah_1h}* (Yakin {prob_1h*100:.1f}%)\n"
+            pesan_utama += f"└ Cek 1 Jam Lalu: {eval_1h}\n\n"
+            
+            pesan_utama += f"🔭 *PREDIKSI TREN (6 Jam):*\n"
+            pesan_utama += f"├ Arah (Global): *{arah_6h}* (Yakin {prob_6h*100:.1f}%)\n"
+            pesan_utama += f"└ Cek 6 Jam Lalu: {eval_6h}\n\n"
+            
+            pesan_utama += f"🚦 *KESIMPULAN SINYAL:*\n_{kesimpulan}_\n\n"
+            
+            pesan_utama += f"📊 *MANAJEMEN RISIKO:*\n"
+            if risk_mult < 1.0:
+                pesan_utama += f"├ ⚠️ *STATUS:* REM DARURAT AKTIF\n"
+            pesan_utama += f"├ Alokasi Modal Aman: Maksimal *{exposure}%* saldo.\n"
+            pesan_utama += f"├ Tren Global (ADX): {tren_status}\n"
+            pesan_utama += f"├ Posisi Bandar (VWAP): {vwap_status}\n"
+            pesan_utama += f"└ Batas Apes (SL 95%): {format_rupiah(var95_idr)}\n\n"
+            
+            pesan_utama += f"📰 *SENTIMEN BERITA:* {news_status}"
+
+            # PESAN DIAGNOSTIK
+            global_status = "🟢 *BOT BERJALAN NORMAL 100%*" if all("✅" in v for v in diagnostics.values()) else "🟡 *BERJALAN DENGAN PERINGATAN*"
+            pesan_diag = f"🛠️ *DIAGNOSTIK SISTEM HYBRID* 🛠️\n\n"
+            for k, v in diagnostics.items(): pesan_diag += f"├ {v}\n"
+            pesan_diag += f"├ ⏱️ Waktu Proses: {time.time() - start_time:.1f} detik\n"
+            pesan_diag += f"├ 🔔 Trigger Kirim: {alasan_kirim}\n\n"
+            pesan_diag += f"Status Global: {global_status}"
+
+            # KIRIM 3 GAMBAR KE TELEGRAM
+            send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
+            print(f"[*] Pesan Telegram terkirim. Alasan: {alasan_kirim}")
+        else:
+            print(f"[*] SILENT MODE AKTIF: Harga stabil dan sinyal tidak berubah. Durasi eksekusi: {time.time() - start_time:.1f} detik.")
 
     except Exception as fatal_e:
         pesan_fatal = f"🚨 *BOT MATI MENDADAK (FATAL ERROR)* 🚨\n\nPenyebab: {str(fatal_e)}\nWaktu: {sekarang_wita.strftime('%H:%M WITA')}"
