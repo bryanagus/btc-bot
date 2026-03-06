@@ -801,7 +801,7 @@ def main():
             with open(ALERT_FILE, 'w') as f:
                 json.dump({
                     'price': global_usd,
-                    'signal': kesimpulan, # Tetap disimpan untuk kompatibilitas
+                    'signal': saran_tindakan, # Tetap disimpan untuk kompatibilitas
                     'saran': saran_tindakan, # Disimpan untuk trigger jika berubah
                     'time': time.time(),
                     'last_hourly_report': new_last_hourly
