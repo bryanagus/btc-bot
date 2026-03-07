@@ -1,8 +1,9 @@
 name: Bot Trading BTC Pro WITA
 
 on:
-  # schedule:
-  #   - cron: '13 * * * *' 
+  schedule:
+    # Jalan otomatis setiap jam pada menit ke-10 (misal: 01:10, 02:10, 03:10)
+    #- cron: '10 * * * *' 
   workflow_dispatch:
 
 permissions:
@@ -35,12 +36,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # MENGGUNAKAN ACTION OTOMATIS DENGAN TOKEN UNTUK SIMPAN CSV & JSON (DITAMBAH PKL & ALERT STATE)
+      # MENGGUNAKAN ACTION OTOMATIS DENGAN TOKEN UNTUK SIMPAN CSV & JSON (DITAMBAH PKL, ALERT STATE, DAN LOG SYSTEM)
       - name: Auto Save CSV & JSON to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🤖 Auto-update Jurnal Prediksi AI [skip ci]"
-          file_pattern: 'ai_history_log.csv dashboard_data.json ai_model_1H.pkl ai_model_6H.pkl last_alert_state.json'
+          # Menambahkan bot_system.log agar riwayat kerja bot tersimpan di github
+          file_pattern: 'ai_history_log.csv dashboard_data.json ai_model_1H.pkl ai_model_6H.pkl last_alert_state.json bot_system.log'
           #push_options: '--force' # Memaksa masuk jika branch terkunci
 
       # =========================================================
@@ -53,7 +55,7 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           server-dir: htdocs/ # Folder wajib InfinityFree untuk publik
-          # Demi keamanan, JANGAN kirim source code python dan CSV database ke web publik!
+          # Demi keamanan, JANGAN kirim source code python, CSV database, dan Log Sistem ke web publik!
           exclude: |
             **/.git*
             **/.git*/**
@@ -64,3 +66,4 @@ jobs:
             *.png
             *.pkl
             last_alert_state.json
+            bot_system.log
