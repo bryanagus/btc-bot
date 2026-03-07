@@ -225,11 +225,9 @@ def engineer_features(df, fng_dict):
     df['FnG_Index'] = df['FnG_Index'].ffill().bfill().fillna(50.0) 
     df.drop(columns=['Date_Only'], inplace=True)
 
-    # EVALUASI TERAPAN: Target Thresholding agar tidak Noisy (Hanya menganggap Naik jika > 0.2% / 0.6%)
-    threshold_1h = 0.002
-    threshold_6h = 0.006
-    df["Target_1H"] = (df["Close"].shift(-1) > (df["Close"] * (1 + threshold_1h))).astype(float)
-    df["Target_6H"] = (df["Close"].shift(-6) > (df["Close"] * (1 + threshold_6h))).astype(float)
+    # EVALUASI TERAPAN: AI murni tebak arah Naik/Turun tanpa threshold
+    df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
+    df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
     features_cols = [
         "EMA_Spread", "RSI", "MACD_Hist", "Log_Return", "Volatility", 
@@ -366,7 +364,20 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target_candle, 'Close'])
                     
-                    arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
+                    # Klasifikasi pergerakan untuk 1 Jam (Threshold 0.2%)
+                    batas_naik_1h = past_usd_price * 1.002
+                    batas_turun_1h = past_usd_price * 0.998
+                    
+                    if actual_end_price > batas_naik_1h:
+                        arah_asli = "Naik Signifikan 🚀"
+                    elif actual_end_price > past_usd_price:
+                        arah_asli = "Naik Dikit 📈"
+                    elif actual_end_price < batas_turun_1h:
+                        arah_asli = "Turun Signifikan 🩸"
+                    else:
+                        arah_asli = "Turun Dikit 📉"
+                        
+                    # Penilaian murni berdasarkan arah
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
                         hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
@@ -389,7 +400,20 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target_candle, 'Close'])
                     
-                    arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
+                    # Klasifikasi pergerakan untuk 6 Jam (Threshold 0.6%)
+                    batas_naik_6h = past_usd_price * 1.006
+                    batas_turun_6h = past_usd_price * 0.994
+                    
+                    if actual_end_price > batas_naik_6h:
+                        arah_asli = "Naik Signifikan 🚀"
+                    elif actual_end_price > past_usd_price:
+                        arah_asli = "Naik Dikit 📈"
+                    elif actual_end_price < batas_turun_6h:
+                        arah_asli = "Turun Signifikan 🩸"
+                    else:
+                        arah_asli = "Turun Dikit 📉"
+                        
+                    # Penilaian murni berdasarkan arah
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
                         hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
