@@ -145,7 +145,7 @@ def fetch_crypto_news_sentiment():
         return "BERITA TIDAK TERSEDIA ⚪"
 
 # ------------------------------------------------------------------------------
-# 2. FEATURE ENGINEERING (ADVANCED QUANT INDICATORS + F&G INJECTION)
+# 2. FEATURE ENGINEERING (ADVANCED QUANT INDICATORS)
 # ------------------------------------------------------------------------------
 def engineer_features(df, fng_dict):
     df = df.copy() 
@@ -199,7 +199,7 @@ def engineer_features(df, fng_dict):
     df["BB_Width"] = (df["BB_Upper"] - df["BB_Lower"]) / df["BB_Middle"]
     df["ATR_Ratio"] = df["ATR"] / df["Close"]
     
-    # Injection Fear & Greed ke Data AI
+    # Injection Fear & Greed (Disimpan di DF untuk laporan, bukan untuk AI)
     df['Date_Only'] = df.index.date
     df['FnG_Index'] = df['Date_Only'].map(fng_dict)
     df['FnG_Index'] = df['FnG_Index'].ffill().bfill().fillna(50.0) 
@@ -208,9 +208,10 @@ def engineer_features(df, fng_dict):
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
+    # PERBAIKAN 2: Membersihkan Otak AI (Tidak ada FnG_Index dan Return_1H)
     features_cols = [
         "EMA_Spread", "RSI", "MACD_Hist", "Log_Return", "Volatility", 
-        "Trend_Slope", "Momentum_Accel", "Regime", "ADX", "BB_Width", "ATR_Ratio", "FnG_Index"
+        "Trend_Slope", "Momentum_Accel", "Regime", "ADX", "BB_Width", "ATR_Ratio"
     ]
     return df, features_cols
 
@@ -244,7 +245,9 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
 
     if need_training:
         print(f"[*] Melatih ulang Otak AI ({model_name}) dengan Tier 3 Tuning...")
-        train_df = df.iloc[: -(shift_len + 1)].dropna(subset=features + [target_col])
+        
+        # PERBAIKAN 1: Data Slicing yang Benar (Tidak membuang 1 jam historis yang valid)
+        train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
         X_train = train_df[features].values
         y_train = train_df[target_col].values
         
@@ -252,15 +255,15 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         X_train_scaled = scaler.fit_transform(X_train)
         X_live_scaled = scaler.transform(X_live)
 
-        # AI Tuning Parameters
-        lr_base = LogisticRegression(class_weight='balanced', max_iter=200, random_state=42)
+        # PERBAIKAN 3: AI Tuning Parameters yang lebih natural (Anti Ragu-Ragu)
+        lr_base = LogisticRegression(max_iter=500, random_state=42)
         lr_cal = CalibratedClassifierCV(lr_base, method="sigmoid", cv=3)
         lr_cal.fit(X_train_scaled, y_train)
         
-        rf = RandomForestClassifier(n_estimators=150, max_depth=10, min_samples_split=5, class_weight='balanced', random_state=42, n_jobs=-1)
+        rf = RandomForestClassifier(n_estimators=100, max_depth=7, min_samples_split=5, random_state=42, n_jobs=-1)
         rf.fit(X_train_scaled, y_train)
         
-        gb = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=42)
+        gb = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42)
         gb.fit(X_train_scaled, y_train)
         
         with open(model_file, 'wb') as f:
@@ -622,21 +625,29 @@ def plot_dashboard_indicators(df, base_filename="chart_indicators"):
         diagnostics["chart"] = f"❌ Gagal Render Dashboard: {e}"
 
 # ------------------------------------------------------------------------------
-# 7. TELEGRAM SENDER (DENGAN SMART DIAGNOSTIC ALERT)
+# 7. TELEGRAM SENDER (DENGAN SMART DIAGNOSTIC ALERT & SARAN TERPISAH)
 # ------------------------------------------------------------------------------
-def send_telegram_messages(pesan_utama, chart_paths, pesan_diag=""):
+def send_telegram_messages(pesan_utama, chart_paths, pesan_diag="", pesan_saran=""):
     if not TELEGRAM_BOT_TOKEN: return
     url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     
+    # 1. Kirim Pesan Utama
     requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_utama, 'parse_mode': 'Markdown'})
+    
+    # 2. Kirim Gambar
     for path in chart_paths:
         if os.path.exists(path):
             with open(path, 'rb') as photo:
                 requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
                 
+    # 3. Kirim Diagnostik (Jika ada)
     if pesan_diag.strip() != "":
         requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_diag, 'parse_mode': 'Markdown'})
+        
+    # 4. Kirim Saran Eksekusi (Paling Bawah)
+    if pesan_saran.strip() != "":
+        requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_saran, 'parse_mode': 'Markdown'})
 
 # ------------------------------------------------------------------------------
 # MAIN EXECUTION
@@ -814,7 +825,7 @@ def main():
             else: fng_str = f"{int(fng_val)} (Netral 😐)"
 
             # ============================================================
-            # FORMAT LAPORAN TELEGRAM LENGKAP & RAPI 
+            # 1. FORMAT PESAN UTAMA
             # ============================================================
             pesan_utama = f"💎 *LAPORAN TRADING AI (HYBRID USD-IDR)* 💎\n"
             pesan_utama += f"📅 {sekarang_wita.strftime('%d %B %Y | %H:%M WITA')}\n"
@@ -849,15 +860,10 @@ def main():
             pesan_utama += f"• Alokasi Dana Aman: Maksimal *{exposure}%* dari portofolio.\n"
             pesan_utama += f"• Stop Loss (95% Aman): {format_rupiah(var95_idr)}\n"
             pesan_utama += f"• Posisi Bandar (VWAP): {vwap_status}\n"
-            pesan_utama += f"• Psikologi Pasar Dunia: {fng_str}\n\n"
-            
-            # BAGIAN BARU: SARAN EKSEKUSI
-            pesan_utama += f"🎯 *KESIMPULAN & SARAN TINDAKAN*\n"
-            pesan_utama += f"*{saran_tindakan}*\n"
-            pesan_utama += f"_{alasan_saran}_"
+            pesan_utama += f"• Psikologi Pasar Dunia: {fng_str}\n"
 
             # ============================================================
-            # PEMBUATAN PESAN DIAGNOSTIK (SMART ALERT: HANYA JIKA ERROR)
+            # 2. PEMBUATAN PESAN DIAGNOSTIK (SMART ALERT: HANYA JIKA ERROR)
             # ============================================================
             pesan_diag = ""
             if ada_error_sistem:
@@ -868,7 +874,15 @@ def main():
                         pesan_diag += f"❌ *{k.upper()}*: {v}\n"
                 pesan_diag += f"\n_Bot otomatis menggunakan fallback estimasi. Harap pantau server._"
 
-            send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag)
+            # ============================================================
+            # 3. PEMBUATAN PESAN SARAN TINDAKAN (TERPISAH & PALING BAWAH)
+            # ============================================================
+            pesan_saran = f"🎯 *KESIMPULAN & SARAN TINDAKAN*\n"
+            pesan_saran += f"*{saran_tindakan}*\n"
+            pesan_saran += f"_{alasan_saran}_"
+
+            # KIRIM SEMUA PESAN SECARA BERURUTAN
+            send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag, pesan_saran)
             print(f"[*] Pesan Telegram terkirim. Alasan: {alasan_kirim}")
         else:
             print(f"[*] SILENT MODE AKTIF: Harga stabil. Bot menunggu laporan terjadwal. Eksekusi: {time.time() - start_time:.1f} dtk.")
