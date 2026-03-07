@@ -1,29 +1,39 @@
 {
-    "last_update": "07 March 2026 18:10 WITA",
+    "last_update": "07 March 2026 19:10 WITA",
     "prices": {
-        "indodax_idr": 1154384000.0,
-        "global_usd": 68014.953125,
+        "indodax_idr": 1154426000.0,
+        "global_usd": 67900.578125,
         "kurs_idr": 16913.099609375,
-        "global_idr_converted": 1150343677.1300964,
-        "spread_premium": 4040322.8699035645
+        "global_idr_converted": 1148409241.3622742,
+        "spread_premium": 6016758.63772583
     },
     "current_prediction": {
-        "prob_1h": 0.3170166875433509,
-        "prob_6h": 0.28885459672855934,
+        "prob_1h": 0.32932815822082073,
+        "prob_6h": 0.27472763641213793,
         "arah_1h": "TURUN",
         "arah_6h": "TURUN"
     },
     "stats": {
-        "win_rate_1h": 33.3,
+        "win_rate_1h": 50.0,
         "win_rate_6h": 0,
-        "risk_multiplier": 0.1
+        "risk_multiplier": 0.5
     },
     "indicators": {
-        "rsi": 36.02,
-        "adx": 50.88,
+        "rsi": 34.71,
+        "adx": 50.33,
         "trend": "TURUN"
     },
     "history_1h": [
+        {
+            "waktu": "07 Mar 18:00",
+            "start_usd": 68014.953125,
+            "end_usd": 67882.578125,
+            "start_idr": 1154384000.0,
+            "end_idr": 1154426000.0,
+            "prediksi": "TURUN",
+            "keyakinan": "31.7%",
+            "status": "BENAR"
+        },
         {
             "waktu": "07 Mar 17:00",
             "start_usd": 67803.2734375,
