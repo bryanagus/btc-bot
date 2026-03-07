@@ -1,28 +1,39 @@
 {
-    "last_update": "07 March 2026 23:11 WITA",
+    "last_update": "08 March 2026 00:10 WITA",
     "prices": {
-        "indodax_idr": 1153810000.0,
-        "global_usd": 68009.671875,
+        "indodax_idr": 1151218000.0,
+        "global_usd": 67849.1171875,
         "kurs_idr": 16913.099609375,
-        "global_idr_converted": 1150254354.8227844,
-        "spread_premium": 3555645.177215576
+        "global_idr_converted": 1147538877.4003448,
+        "spread_premium": 3679122.5996551514
     },
     "current_prediction": {
-        "prob_1h": 0.5091814445645979,
-        "prob_6h": 0.4977710608217457,
-        "arah_1h": "NAIK",
+        "prob_1h": 0.49663011946264357,
+        "prob_6h": 0.4964670165495121,
+        "arah_1h": "TURUN",
         "arah_6h": "TURUN"
     },
     "stats": {
-        "win_rate_1h": 0,
+        "win_rate_1h": 0.0,
         "win_rate_6h": 0,
         "risk_multiplier": 1.0
     },
     "indicators": {
-        "rsi": 38.83,
-        "adx": 47.95,
+        "rsi": 36.09,
+        "adx": 47.85,
         "trend": "TURUN"
     },
-    "history_1h": [],
+    "history_1h": [
+        {
+            "waktu": "07 Mar 23:00",
+            "start_usd": 68009.671875,
+            "end_usd": 67910.8984375,
+            "start_idr": 1153810000.0,
+            "end_idr": 1151218000.0,
+            "prediksi": "NAIK",
+            "keyakinan": "50.9%",
+            "status": "SALAH"
+        }
+    ],
     "history_6h": []
 }
