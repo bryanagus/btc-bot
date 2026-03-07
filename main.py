@@ -6,6 +6,7 @@
 # PRO Upgrade (Tier 1 & 3): Fear & Greed API + Hyperparameter Tuning AI
 # Sensor Waktu: Presisi Cronjob 10 Menitan (Jendela menit 05-19)
 # Evaluasi Murni: USD Global (Yahoo Finance) agar AI tidak bingung.
+# Perbaikan Final: Closed Candle Time Sync (AI Mundur 1 Langkah agar Akurat)
 # ==============================================================================
 import pandas as pd
 import numpy as np
@@ -208,7 +209,7 @@ def engineer_features(df, fng_dict):
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
-    # PERBAIKAN 2: Membersihkan Otak AI (Tidak ada FnG_Index dan Return_1H)
+    # PERBAIKAN: Membersihkan Otak AI (Tidak ada FnG_Index dan Return_1H)
     features_cols = [
         "EMA_Spread", "RSI", "MACD_Hist", "Log_Return", "Volatility", 
         "Trend_Slope", "Momentum_Accel", "Regime", "ADX", "BB_Width", "ATR_Ratio"
@@ -227,6 +228,7 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         if file_age < 86400:
             need_training = False
             
+    # Mengambil baris terakhir dari df_closed (Data yg 100% sudah closed)
     X_live = df[features].iloc[-1:].fillna(0).values
 
     if not need_training:
@@ -246,7 +248,7 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
     if need_training:
         print(f"[*] Melatih ulang Otak AI ({model_name}) dengan Tier 3 Tuning...")
         
-        # PERBAIKAN 1: Data Slicing yang Benar (Tidak membuang 1 jam historis yang valid)
+        # Slicing yang benar (Membuang sesuai shift_len)
         train_df = df.iloc[:-shift_len].dropna(subset=features + [target_col])
         X_train = train_df[features].values
         y_train = train_df[target_col].values
@@ -255,7 +257,7 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         X_train_scaled = scaler.fit_transform(X_train)
         X_live_scaled = scaler.transform(X_live)
 
-        # PERBAIKAN 3: AI Tuning Parameters yang lebih natural (Anti Ragu-Ragu)
+        # AI Tuning Parameters (Anti Ragu-Ragu)
         lr_base = LogisticRegression(max_iter=500, random_state=42)
         lr_cal = CalibratedClassifierCV(lr_base, method="sigmoid", cv=3)
         lr_cal.fit(X_train_scaled, y_train)
@@ -296,7 +298,7 @@ def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
     return actual_usd * past_ratio
 
 def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr):
-    current_time = df.index[-1]
+    current_time = df.index[-1] # Waktu Live dari Yahoo Finance (Candle yang sedang berjalan)
     usd_live_price = float(df['Close'].iloc[-1])
     target_time_1h = current_time + pd.Timedelta(hours=1)
     target_time_6h = current_time + pd.Timedelta(hours=6)
@@ -322,14 +324,19 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
             history['target_1h'] = pd.to_datetime(history['target_1h'], format='mixed', utc=True)
             history['target_6h'] = pd.to_datetime(history['target_6h'], format='mixed', utc=True)
             
+            # --- PERBAIKAN EVALUASI: Mencocokkan dengan Candle yang SUDAH TUTUP ---
             mask_1h = (history['target_1h'] <= current_time) & (history['result_1h'].isna())
             for idx, row in history[mask_1h].iterrows():
                 t_target = row['target_1h']
-                if t_target in df.index:
+                t_target_candle = t_target - pd.Timedelta(hours=1) # Mengambil label candle penutupannya
+                
+                if t_target_candle in df.index:
                     past_prob = float(row['prob_1h'])
                     past_usd_price = float(row['usd_start_price'])
                     past_idr_price = float(row['idr_start_price'])
-                    actual_end_price = float(df.loc[t_target, 'Close'])
+                    
+                    # Harga final diambil murni dari Candle Closed
+                    actual_end_price = float(df.loc[t_target_candle, 'Close'])
                     
                     arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
@@ -345,11 +352,14 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
             mask_6h = (history['target_6h'] <= current_time) & (history['result_6h'].isna())
             for idx, row in history[mask_6h].iterrows():
                 t_target = row['target_6h']
-                if t_target in df.index:
+                t_target_candle = t_target - pd.Timedelta(hours=1)
+                
+                if t_target_candle in df.index:
                     past_prob = float(row['prob_6h'])
                     past_usd_price = float(row['usd_start_price'])
                     past_idr_price = float(row['idr_start_price'])
-                    actual_end_price = float(df.loc[t_target, 'Close'])
+                    
+                    actual_end_price = float(df.loc[t_target_candle, 'Close'])
                     
                     arah_asli = "Naik" if actual_end_price > past_usd_price else "Turun"
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
@@ -662,6 +672,10 @@ def main():
         df, kurs_idr, indodax_live_idr = fetch_data_with_retry()
         df, features = engineer_features(df, fng_dict)
         
+        # === PERBAIKAN SINKRONISASI WAKTU AI ===
+        # Membuang 1 candle Live terakhir (agar AI murni belajar & menebak dari Closed Candle)
+        df_closed = df.iloc[:-1].copy()
+        
         buy_wall, sell_wall = fetch_indodax_depth()
         
         global_usd = float(df['Close'].iloc[-1])
@@ -675,12 +689,14 @@ def main():
         tren_status = "Kuat" if df['ADX'].iloc[-1] > 25 else "Lemah / Sideways"
         vwap_status = "Aman (Harga di atas VWAP)" if global_usd > df['VWAP_24'].iloc[-1] else "Bahaya (Harga di bawah VWAP)"
         
-        try: prob_1h = train_honest_model(df, features, "Target_1H", shift_len=1, model_name="1H")
+        # AI Training dan Prediksi kini sepenuhnya menggunakan df_closed
+        try: prob_1h = train_honest_model(df_closed, features, "Target_1H", shift_len=1, model_name="1H")
         except Exception as e: diagnostics["ai_1h"] = f"❌ Error 1H: {e}"; prob_1h = 0.5
             
-        try: prob_6h = train_honest_model(df, features, "Target_6H", shift_len=6, model_name="6H")
+        try: prob_6h = train_honest_model(df_closed, features, "Target_6H", shift_len=6, model_name="6H")
         except Exception as e: diagnostics["ai_6h"] = f"❌ Error 6H: {e}"; prob_6h = 0.5
 
+        # Evaluasi Harga & Logging menggunakan df utuh (untuk merekam timestamp yang sedang Live)
         eval_1h, eval_6h, risk_mult = manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr)
         
         generate_web3_dashboard_data(indodax_live_idr, global_usd, kurs_idr, prob_1h, prob_6h, df, risk_mult)
