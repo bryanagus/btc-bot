@@ -3,7 +3,7 @@ name: Bot Trading BTC Pro WITA
 on:
   schedule:
     # Jalan otomatis setiap jam pada menit ke-10 (misal: 01:10, 02:10, 03:10)
-    #- cron: '10 * * * *' 
+    # - cron: '10 * * * *' 
   workflow_dispatch:
 
 permissions:
