@@ -1,29 +1,39 @@
 {
-    "last_update": "09 March 2026 00:10 WITA",
+    "last_update": "09 March 2026 01:10 WITA",
     "prices": {
-        "indodax_idr": 1140610000.0,
-        "global_usd": 67198.3125,
+        "indodax_idr": 1140345000.0,
+        "global_usd": 67119.546875,
         "kurs_idr": 16914.0,
-        "global_idr_converted": 1136592257.625,
-        "spread_premium": 4017742.375
+        "global_idr_converted": 1135260015.84375,
+        "spread_premium": 5084984.15625
     },
     "current_prediction": {
-        "prob_1h": 0.5160258850258489,
-        "prob_6h": 0.5206860593875324,
+        "prob_1h": 0.5261548026451488,
+        "prob_6h": 0.5279424664563384,
         "arah_1h": "NAIK",
         "arah_6h": "NAIK"
     },
     "stats": {
-        "win_rate_1h": 40.0,
-        "win_rate_6h": 50.0,
-        "risk_multiplier": 0.5
+        "win_rate_1h": 38.5,
+        "win_rate_6h": 47.6,
+        "risk_multiplier": 0.1
     },
     "indicators": {
-        "rsi": 42.7,
-        "adx": 36.92,
+        "rsi": 43.32,
+        "adx": 37.01,
         "trend": "TURUN"
     },
     "history_1h": [
+        {
+            "waktu": "09 Mar 00:00",
+            "start_usd": 67198.3125,
+            "end_usd": 66846.515625,
+            "start_idr": 1140610000.0,
+            "end_idr": 1140345000.0,
+            "prediksi": "NAIK",
+            "keyakinan": "51.6%",
+            "status": "SALAH"
+        },
         {
             "waktu": "08 Mar 23:00",
             "start_usd": 67265.890625,
@@ -276,6 +286,16 @@
         }
     ],
     "history_6h": [
+        {
+            "waktu": "08 Mar 19:00",
+            "start_usd": 67585.0,
+            "end_usd": 66846.515625,
+            "start_idr": 1146800000.0,
+            "end_idr": 1140345000.0,
+            "prediksi": "NAIK",
+            "keyakinan": "51.0%",
+            "status": "SALAH"
+        },
         {
             "waktu": "08 Mar 18:00",
             "start_usd": 67814.046875,
