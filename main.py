@@ -449,9 +449,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
             history.to_csv(HISTORY_FILE, index=False)
 
             recent_1h = history.dropna(subset=['result_1h']).tail(24)
-            recent_valid = recent_1h[~recent_1h['result_1h'].str.contains("DATA HILANG")]
+            recent_valid = recent_1h[~recent_1h['result_1h'].astype(str).str.contains("DATA HILANG")]
             if len(recent_valid) >= 3:
-                benar_count = recent_valid['result_1h'].str.contains('BENAR').sum()
+                benar_count = recent_valid['result_1h'].astype(str).str.contains('BENAR').sum()
                 win_rate = benar_count / len(recent_valid)
                 if win_rate < 0.4: risk_multiplier = 0.1     
                 elif win_rate < 0.6: risk_multiplier = 0.5   
@@ -516,7 +516,7 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
                 "end_idr": row['idr_end_price_1h'],
                 "prediksi": "NAIK" if row['prob_1h'] > 0.5 else "TURUN",
                 "keyakinan": f"{row['prob_1h']*100:.1f}%",
-                "status": row['result_1h'].split(' ')[0]
+                "status": str(row['result_1h']).split(' ')[0]
             })
             
         hist_6h = history.dropna(subset=['result_6h']).tail(100)
@@ -531,7 +531,7 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
                 "end_idr": row['idr_end_price_6h'],
                 "prediksi": "NAIK" if row['prob_6h'] > 0.5 else "TURUN",
                 "keyakinan": f"{row['prob_6h']*100:.1f}%",
-                "status": row['result_6h'].split(' ')[0]
+                "status": str(row['result_6h']).split(' ')[0]
             })
 
         total_1h = len([x for x in table_1h if "BENAR" in x['status']])
@@ -841,6 +841,9 @@ def main():
         
         waktu_sekarang_str = sekarang_wita.strftime('%Y-%m-%d-%H')
         menit_sekarang = sekarang_wita.minute
+        
+        # PERBAIKAN: Inisialisasi last_state untuk mencegah UnboundLocalError
+        last_state = {}
         
         if not os.path.exists(ALERT_FILE):
             kirim_telegram = True
