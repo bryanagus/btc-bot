@@ -1,11 +1,11 @@
 {
-    "last_update": "10 March 2026 03:04 WITA",
+    "last_update": "10 March 2026 03:13 WITA",
     "prices": {
-        "indodax_idr": 1162662000.0,
-        "global_usd": 68459.5625,
+        "indodax_idr": 1161571000.0,
+        "global_usd": 68496.6015625,
         "kurs_idr": 16969.0,
-        "global_idr_converted": 1161690316.0625,
-        "spread_premium": 971683.9375
+        "global_idr_converted": 1162318831.9140625,
+        "spread_premium": -747831.9140625
     },
     "current_prediction": {
         "prob_1h": 0.05322944089282247,
@@ -19,7 +19,7 @@
         "risk_multiplier": 1.0
     },
     "indicators": {
-        "rsi": 57.17,
+        "rsi": 57.57,
         "adx": 28.6,
         "trend": "NAIK"
     },
