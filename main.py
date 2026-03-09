@@ -7,6 +7,7 @@
 # Sensor Waktu: Presisi Cronjob 10 Menitan (Jendela menit 05-19)
 # Evaluasi Murni: USD Global (Yahoo Finance) agar AI tidak bingung.
 # Perbaikan Final: Closed Candle Time Sync + Full Evaluation Upgrade (2 Years Data, TimeSeriesSplit, Log-MC)
+# Perbaikan Anti-FOMO & GitHub Optimation: Cache 3 Jam, RSI Fallback, Live Time CSV, Orderbook 50
 # ==============================================================================
 import pandas as pd
 import numpy as np
@@ -126,8 +127,9 @@ def fetch_data_with_retry(period='730d', interval='1h'):
 def fetch_indodax_depth():
     try:
         resp = requests.get('https://indodax.com/api/depth/btcidr', timeout=10).json()
-        limit_buy = min(15, len(resp.get('buy', [])))
-        limit_sell = min(15, len(resp.get('sell', [])))
+        # PERBAIKAN: Meningkatkan limit kedalaman orderbook dari 15 ke 50 agar tembok bandar terlihat
+        limit_buy = min(50, len(resp.get('buy', [])))
+        limit_sell = min(50, len(resp.get('sell', [])))
         
         buy_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('buy', [])[:limit_buy]])
         sell_wall = sum([float(x[0]) * float(x[1]) for x in resp.get('sell', [])[:limit_sell]])
@@ -192,7 +194,6 @@ def engineer_features(df, fng_dict):
     df['-DI'] = 100 * (df['-DM'].ewm(alpha=1/14, adjust=False).mean() / df['ATR'])
     df['ADX'] = (100 * np.abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])).ewm(alpha=1/14, adjust=False).mean()
 
-    # EVALUASI TERAPAN: Volume Spike sebagai Feature tambahan
     if 'Volume' in df.columns:
         df['VWAP_24'] = (((df['High'] + df['Low'] + df['Close']) / 3) * df['Volume']).rolling(24).sum() / df['Volume'].rolling(24).sum()
         df['Volume_Spike'] = df['Volume'] / df['Volume'].rolling(24).mean().replace(0, 1)
@@ -225,7 +226,6 @@ def engineer_features(df, fng_dict):
     df['FnG_Index'] = df['FnG_Index'].ffill().bfill().fillna(50.0) 
     df.drop(columns=['Date_Only'], inplace=True)
 
-    # EVALUASI TERAPAN: AI murni tebak arah Naik/Turun tanpa threshold
     df["Target_1H"] = (df["Close"].shift(-1) > df["Close"]).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > df["Close"]).astype(float)
     
@@ -244,7 +244,8 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
     
     if os.path.exists(model_file):
         file_age = time.time() - os.path.getmtime(model_file)
-        if file_age < 86400: # Cache 24 jam
+        # PERBAIKAN: Menurunkan Cache AI dari 24 Jam (86400) menjadi 3 Jam (10800) agar otak AI cepat update saat tren berubah
+        if file_age < 10800: 
             need_training = False
             
     X_live = df[features].iloc[-1:].fillna(0).values
@@ -270,25 +271,20 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         X_train = train_df[features].values
         y_train = train_df[target_col].values
         
-        # EVALUASI TERAPAN: Penskalaan (Scaling) dipisah. Tree model menggunakan data murni (Raw)
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_live_scaled = scaler.transform(X_live)
 
-        # EVALUASI TERAPAN: TimeSeriesSplit Cross-Validation
         tscv = TimeSeriesSplit(n_splits=5)
         
-        # Logistic Regression (Membutuhkan Scaled Data)
         lr_base = LogisticRegression(max_iter=500, random_state=42)
         lr_cal = CalibratedClassifierCV(lr_base, method="sigmoid", cv=tscv)
         lr_cal.fit(X_train_scaled, y_train)
         
-        # Random Forest (Membutuhkan Raw Data)
         rf_base = RandomForestClassifier(n_estimators=100, max_depth=7, min_samples_split=5, random_state=42, n_jobs=-1)
         rf_cal = CalibratedClassifierCV(rf_base, method="sigmoid", cv=tscv)
         rf_cal.fit(X_train, y_train)
         
-        # Gradient Boosting (Membutuhkan Raw Data)
         gb_base = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42)
         gb_cal = CalibratedClassifierCV(gb_base, method="sigmoid", cv=tscv)
         gb_cal.fit(X_train, y_train)
@@ -296,12 +292,10 @@ def train_honest_model(df, features, target_col, shift_len, model_name):
         with open(model_file, 'wb') as f:
             pickle.dump({'lr': lr_cal, 'rf': rf_cal, 'gb': gb_cal, 'scaler': scaler}, f)
 
-    # EVALUASI TERAPAN: Pemisahan Data Scaled & Raw pada saat prediksi
     prob_lr = lr_cal.predict_proba(X_live_scaled)[0,1]
     prob_rf = rf_cal.predict_proba(X_live)[0,1]
     prob_gb = gb_cal.predict_proba(X_live)[0,1]
     
-    # EVALUASI TERAPAN: Weighted Ensemble (RF dan GB lebih mendominasi daripada LR)
     prob_final = (prob_rf * 0.4) + (prob_gb * 0.4) + (prob_lr * 0.2)
     return prob_final
 
@@ -326,10 +320,13 @@ def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
     return actual_usd * past_ratio
 
 def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr):
-    current_time = df.index[-1] 
+    # PERBAIKAN: Memisahkan waktu eksekusi riil dengan waktu candle untuk mencegah bug duplikat CSV
+    waktu_eksekusi = datetime.now(pytz.utc)
+    candle_time = df.index[-1] 
+    
     usd_live_price = float(df['Close'].iloc[-1])
-    target_time_1h = current_time + pd.Timedelta(hours=1)
-    target_time_6h = current_time + pd.Timedelta(hours=6)
+    target_time_1h = candle_time + pd.Timedelta(hours=1)
+    target_time_6h = candle_time + pd.Timedelta(hours=6)
     
     eval_1h_msg = "Menunggu..."
     eval_6h_msg = "Menunggu..."
@@ -352,7 +349,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
             history['target_1h'] = pd.to_datetime(history['target_1h'], format='mixed', utc=True)
             history['target_6h'] = pd.to_datetime(history['target_6h'], format='mixed', utc=True)
             
-            mask_1h = (history['target_1h'] <= current_time) & (history['result_1h'].isna())
+            mask_1h = (history['target_1h'] <= candle_time) & (history['result_1h'].isna())
             for idx, row in history[mask_1h].iterrows():
                 t_target = row['target_1h']
                 t_target_candle = t_target - pd.Timedelta(hours=1)
@@ -364,7 +361,6 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target_candle, 'Close'])
                     
-                    # Klasifikasi pergerakan untuk 1 Jam (Threshold 0.2%)
                     batas_naik_1h = past_usd_price * 1.002
                     batas_turun_1h = past_usd_price * 0.998
                     
@@ -377,7 +373,6 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     else:
                         arah_asli = "Turun Dikit 📉"
                         
-                    # Penilaian murni berdasarkan arah
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
                         hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
@@ -385,10 +380,10 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                         
                     history.loc[idx, 'result_1h'] = hasil
                     history.loc[idx, 'usd_end_price_1h'] = actual_end_price
-                    history.loc[idx, 'idr_end_price_1h'] = indodax_live_idr if t_target == current_time else get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
-                    if t_target == current_time: eval_1h_msg = hasil
+                    history.loc[idx, 'idr_end_price_1h'] = indodax_live_idr if t_target == candle_time else get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
+                    if t_target == candle_time: eval_1h_msg = hasil
 
-            mask_6h = (history['target_6h'] <= current_time) & (history['result_6h'].isna())
+            mask_6h = (history['target_6h'] <= candle_time) & (history['result_6h'].isna())
             for idx, row in history[mask_6h].iterrows():
                 t_target = row['target_6h']
                 t_target_candle = t_target - pd.Timedelta(hours=1)
@@ -400,7 +395,6 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target_candle, 'Close'])
                     
-                    # Klasifikasi pergerakan untuk 6 Jam (Threshold 0.6%)
                     batas_naik_6h = past_usd_price * 1.006
                     batas_turun_6h = past_usd_price * 0.994
                     
@@ -413,7 +407,6 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     else:
                         arah_asli = "Turun Dikit 📉"
                         
-                    # Penilaian murni berdasarkan arah
                     if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
                         hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
@@ -421,12 +414,13 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                         
                     history.loc[idx, 'result_6h'] = hasil
                     history.loc[idx, 'usd_end_price_6h'] = actual_end_price
-                    history.loc[idx, 'idr_end_price_6h'] = indodax_live_idr if t_target == current_time else get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
-                    if t_target == current_time: eval_6h_msg = hasil
+                    history.loc[idx, 'idr_end_price_6h'] = indodax_live_idr if t_target == candle_time else get_historical_indodax_price(t_target, past_usd_price, past_idr_price, actual_end_price)
+                    if t_target == candle_time: eval_6h_msg = hasil
 
             history.to_csv(HISTORY_FILE, index=False)
 
-            recent_1h = history.dropna(subset=['result_1h']).tail(5)
+            # PERBAIKAN: Melihat 24 data terakhir agar Win Rate lebih stabil, bukan cuma 5 data
+            recent_1h = history.dropna(subset=['result_1h']).tail(24)
             if len(recent_1h) >= 3:
                 benar_count = recent_1h['result_1h'].str.contains('BENAR').sum()
                 win_rate = benar_count / len(recent_1h)
@@ -440,14 +434,15 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
         risk_multiplier = 1.0
 
     try:
-        t_curr_str = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        t_curr_str = waktu_eksekusi.strftime('%Y-%m-%dT%H:%M:%SZ')
         t_1h_str = target_time_1h.strftime('%Y-%m-%dT%H:%M:%SZ')
         t_6h_str = target_time_6h.strftime('%Y-%m-%dT%H:%M:%SZ')
         
         is_duplicate = False
         if file_exists:
             try:
-                if len(history) > 0 and str(history['created_at'].iloc[-1]) == t_curr_str:
+                # PERBAIKAN: Mencegah duplikat di menit yang sama, tapi mengizinkan interval 15 menit
+                if len(history) > 0 and str(history['created_at'].iloc[-1])[:16] == t_curr_str[:16]:
                     is_duplicate = True
             except: pass
 
@@ -553,7 +548,6 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
 # 6. RISK MANAGEMENT & VISUALISASI
 # ------------------------------------------------------------------------------
 def monte_carlo_simulation_log(price, log_returns_series, steps=1, sims=2000):
-    # EVALUASI TERAPAN: Menggunakan Log Returns Empiris untuk menangkap kejadian Fat Tails
     historical_returns = log_returns_series.dropna().values
     paths = []
     for _ in range(sims):
@@ -755,7 +749,6 @@ def main():
         
         exposure = position_sizing_kelly(prob_1h, prob_6h, current_atr, risk_mult)
         
-        # Panggil Monte Carlo Log-Returns
         exp_1h_usd, var95_usd = monte_carlo_simulation_log(global_usd, df["Log_Return"], steps=1) 
         var95_idr = var95_usd * kurs_idr
         
@@ -772,9 +765,17 @@ def main():
         saran_tindakan = ""
         alasan_saran = ""
         
+        # PERBAIKAN: Mengambil data RSI terakhir untuk logika Anti-FOMO
+        rsi_sekarang = df['RSI'].iloc[-1]
+        
+        # PERBAIKAN: Logika Rekomendasi dilengkapi Filter Pisau Jatuh
         if prob_1h > 0.5 and prob_6h > 0.5 and spread_premium <= 0 and fng_val < 75:
-            saran_tindakan = "🟢 STRONG BUY (BELI SEKARANG)"
-            alasan_saran = "AI memprediksi tren global NAIK kuat, dan harga di Indodax saat ini SEDANG DISKON (lebih murah dari global). Ini adalah titik masuk (*entry*) yang sangat ideal."
+            if rsi_sekarang < 35:
+                saran_tindakan = "⚠️ TUNGGU DULU (PISAU JATUH)"
+                alasan_saran = "Harga di Indodax memang sedang diskon, tapi grafik Global MASIH MENUKIK TAJAM (RSI Oversold). Jangan FOMO, tunggu sampai badai reda dan harga mulai memantul."
+            else:
+                saran_tindakan = "🟢 STRONG BUY (BELI SEKARANG)"
+                alasan_saran = "AI memprediksi tren global NAIK kuat, dan harga di Indodax saat ini SEDANG DISKON (lebih murah dari global). Ini adalah titik masuk (*entry*) yang sangat ideal."
         elif prob_1h > 0.5 and prob_6h > 0.5 and spread_premium > (global_idr_converted * 0.005):
             saran_tindakan = "🟡 TAHAN / JUAL SEBAGIAN (TAKE PROFIT)"
             alasan_saran = "Meski tren global diprediksi NAIK, harga di Indodax saat ini SANGAT MAHAL (Premium tinggi). Daripada beli di pucuk lokal, lebih bijak merealisasikan keuntungan (*take profit*) sebagian."
@@ -835,9 +836,14 @@ def main():
                 selisih_waktu = time.time() - last_state.get('time', 0)
                 last_hourly_report = last_state.get('last_hourly_report', '')
                 
-                if price_diff >= 1.5:
+                # PERBAIKAN: Menurunkan sensitivitas alarm dari 1.5% menjadi 0.6%
+                if price_diff >= 0.6:
                     kirim_telegram = True
-                    alasan_kirim = f"Pergerakan Harga Drastis"
+                    alasan_kirim = f"Pergerakan Harga Drastis ({teks_perubahan})"
+                # PERBAIKAN: Menembus pertahanan Cooldown 1 jam jika ada sinyal darurat
+                elif saran_tindakan in ["🟢 STRONG BUY (BELI SEKARANG)", "🔴 STRONG SELL (JUAL SEGERA)", "⚠️ TUNGGU DULU (PISAU JATUH)"] and saran_tindakan != last_state.get('saran', ''):
+                    kirim_telegram = True
+                    alasan_kirim = f"🚨 PERUBAHAN SINYAL DARURAT!"
                 elif saran_tindakan != last_state.get('saran', ''):
                     if selisih_waktu < 3600: 
                         kirim_telegram = False 
