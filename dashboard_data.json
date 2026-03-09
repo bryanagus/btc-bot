@@ -1,15 +1,15 @@
 {
-    "last_update": "10 March 2026 05:04 WITA",
+    "last_update": "10 March 2026 05:13 WITA",
     "prices": {
-        "indodax_idr": 1166219000.0,
-        "global_usd": 69033.015625,
+        "indodax_idr": 1168108000.0,
+        "global_usd": 69048.203125,
         "kurs_idr": 16832.0,
-        "global_idr_converted": 1161963719.0,
-        "spread_premium": 4255281.0
+        "global_idr_converted": 1162219355.0,
+        "spread_premium": 5888645.0
     },
     "current_prediction": {
-        "prob_1h": 0.0568236084928119,
-        "prob_6h": 0.1300895132320971,
+        "prob_1h": 0.05141389259253293,
+        "prob_6h": 0.13431706186965114,
         "arah_1h": "TURUN",
         "arah_6h": "TURUN"
     },
@@ -19,8 +19,8 @@
         "risk_multiplier": 0.5
     },
     "indicators": {
-        "rsi": 62.53,
-        "adx": 30.71,
+        "rsi": 62.62,
+        "adx": 30.66,
         "trend": "NAIK"
     },
     "history_1h": [
