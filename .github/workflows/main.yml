@@ -1,10 +1,13 @@
 name: Bot Trading BTC Pro WITA
 
 on:
-  #schedule:
-    # Jalan otomatis setiap jam pada menit ke-10 (misal: 01:10, 02:10, 03:10)
-    # - cron: '10 * * * *' 
   workflow_dispatch:
+
+# --- PENGAMAN TABRAKAN (CONCURRENCY) ---
+# Memastikan hanya ada 1 bot yang berjalan di satu waktu agar tidak bentrok saat save CSV
+concurrency:
+  group: bot-trading-group
+  cancel-in-progress: false 
 
 permissions:
   contents: write
@@ -13,17 +16,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # MENGGUNAKAN KUNCI MASTER (TOKEN) UNTUK BYPASS PROTEKSI BRANCH
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.MY_TOKEN }} 
-          fetch-depth: 0
+          fetch-depth: 1 # --- DIPERBAIKI: Ubah ke 1 agar tidak mendownload sejarah masa lalu yang berat ---
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip' # --- DIPERBAIKI: Mengaktifkan Brankas Cache agar loading secepat kilat ---
 
       - name: Install dependencies
         run: |
@@ -36,17 +39,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # MENGGUNAKAN ACTION OTOMATIS DENGAN TOKEN UNTUK SIMPAN CSV & JSON (DITAMBAH PKL, ALERT STATE, DAN LOG SYSTEM)
       - name: Auto Save CSV & JSON to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🤖 Auto-update Jurnal Prediksi AI [skip ci]"
-          # Menambahkan bot_system.log agar riwayat kerja bot tersimpan di github
           file_pattern: 'ai_history_log.csv dashboard_data.json ai_model_1H.pkl ai_model_6H.pkl last_alert_state.json bot_system.log'
-          #push_options: '--force' # Memaksa masuk jika branch terkunci
 
       # =========================================================
       # TAHAP 2: KIRIM DATA KE INFINITYFREE VIA FTP
+      # Peringatan: Jika akun web Anda terkena suspend/banned karena terlalu sering upload (spam), 
+      # hapus bagian bawah ini dan gunakan GitHub Pages sebagai gantinya.
       # =========================================================
       - name: 🚀 Upload ke Web InfinityFree
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
@@ -54,8 +56,7 @@ jobs:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          server-dir: htdocs/ # Folder wajib InfinityFree untuk publik
-          # Demi keamanan, JANGAN kirim source code python, CSV database, dan Log Sistem ke web publik!
+          server-dir: htdocs/
           exclude: |
             **/.git*
             **/.git*/**
