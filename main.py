@@ -238,10 +238,10 @@ def engineer_features(df, fng_dict):
     df.drop(columns=['Date_Only'], inplace=True)
 
     # PERBAIKAN TARGET: Wajib lewat FEE TRADING Indodax
-    # Minimal naik 0.3% dalam 1 Jam untuk kategori NAIK
-    df["Target_1H"] = (df["Close"].shift(-1) > (df["Close"] * 1.003)).astype(float)
-    # Minimal naik 1.0% dalam 6 Jam untuk kategori NAIK
-    df["Target_6H"] = (df["Close"].shift(-6) > (df["Close"] * 1.010)).astype(float)
+    # Minimal naik 0.7% dalam 1 Jam untuk kategori NAIK
+    df["Target_1H"] = (df["Close"].shift(-1) > (df["Close"] * 1.007)).astype(float)
+    # Minimal naik 1.2% dalam 6 Jam untuk kategori NAIK
+    df["Target_6H"] = (df["Close"].shift(-6) > (df["Close"] * 1.012)).astype(float)
     
     features_cols = [
         "EMA_Spread", "RSI", "MACD_Hist", "Log_Return", "Volatility", 
@@ -391,8 +391,8 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target, 'Close'])
                     
-                    batas_naik_1h = past_usd_price * 1.003 # 0.3% Fee sadar
-                    batas_turun_1h = past_usd_price * 0.997
+                    batas_naik_1h = past_usd_price * 1.007 # 0.7% Fee sadar
+                    batas_turun_1h = past_usd_price * 0.993
                     
                     if actual_end_price > batas_naik_1h: arah_asli = "Naik Signifikan 🚀"
                     elif actual_end_price > past_usd_price: arah_asli = "Naik Dikit 📈"
@@ -425,8 +425,8 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target, 'Close'])
                     
-                    batas_naik_6h = past_usd_price * 1.010
-                    batas_turun_6h = past_usd_price * 0.990
+                    batas_naik_6h = past_usd_price * 1.012
+                    batas_turun_6h = past_usd_price * 0.988
                     
                     if actual_end_price > batas_naik_6h: arah_asli = "Naik Signifikan 🚀"
                     elif actual_end_price > past_usd_price: arah_asli = "Naik Dikit 📈"
