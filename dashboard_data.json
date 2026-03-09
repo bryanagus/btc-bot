@@ -1,29 +1,89 @@
 {
-    "last_update": "10 March 2026 03:54 WITA",
+    "last_update": "10 March 2026 04:03 WITA",
     "prices": {
-        "indodax_idr": 1166961000.0,
-        "global_usd": 68885.5625,
+        "indodax_idr": 1170000000.0,
+        "global_usd": 69086.765625,
         "kurs_idr": 16969.0,
-        "global_idr_converted": 1168919110.0625,
-        "spread_premium": -1958110.0625
+        "global_idr_converted": 1172333325.890625,
+        "spread_premium": -2333325.890625
     },
     "current_prediction": {
-        "prob_1h": 0.05322944089282247,
-        "prob_6h": 0.13994674790848474,
+        "prob_1h": 0.062226697340036795,
+        "prob_6h": 0.1495494137777885,
         "arah_1h": "TURUN",
         "arah_6h": "TURUN"
     },
     "stats": {
-        "win_rate_1h": 64.0,
-        "win_rate_6h": 0,
-        "risk_multiplier": 1.0
+        "win_rate_1h": 54.8,
+        "win_rate_6h": 100.0,
+        "risk_multiplier": 0.5
     },
     "indicators": {
-        "rsi": 61.38,
-        "adx": 29.46,
+        "rsi": 63.11,
+        "adx": 30.08,
         "trend": "NAIK"
     },
     "history_1h": [
+        {
+            "waktu": "10 Mar 03:54",
+            "start_usd": 68885.5625,
+            "end_usd": 69086.765625,
+            "start_idr": 1166961000.0,
+            "end_idr": 1170369496.5184555,
+            "prediksi": "TURUN",
+            "keyakinan": "5.3%",
+            "status": "SALAH"
+        },
+        {
+            "waktu": "10 Mar 03:43",
+            "start_usd": 68926.78125,
+            "end_usd": 69086.765625,
+            "start_idr": 1168367000.0,
+            "end_idr": 1171078869.9129105,
+            "prediksi": "TURUN",
+            "keyakinan": "5.3%",
+            "status": "SALAH"
+        },
+        {
+            "waktu": "10 Mar 03:34",
+            "start_usd": 69263.421875,
+            "end_usd": 69086.765625,
+            "start_idr": 1173859000.0,
+            "end_idr": 1170865074.4422505,
+            "prediksi": "TURUN",
+            "keyakinan": "4.9%",
+            "status": "BENAR"
+        },
+        {
+            "waktu": "10 Mar 03:24",
+            "start_usd": 68817.7421875,
+            "end_usd": 69086.765625,
+            "start_idr": 1171095000.0,
+            "end_idr": 1175673063.629008,
+            "prediksi": "TURUN",
+            "keyakinan": "4.9%",
+            "status": "SALAH"
+        },
+        {
+            "waktu": "10 Mar 03:13",
+            "start_usd": 68496.6015625,
+            "end_usd": 69086.765625,
+            "start_idr": 1161571000.0,
+            "end_idr": 1171579050.6857948,
+            "prediksi": "TURUN",
+            "keyakinan": "5.3%",
+            "status": "SALAH"
+        },
+        {
+            "waktu": "10 Mar 03:04",
+            "start_usd": 68459.5625,
+            "end_usd": 69086.765625,
+            "start_idr": 1162662000.0,
+            "end_idr": 1173313912.0644212,
+            "prediksi": "TURUN",
+            "keyakinan": "5.3%",
+            "status": "SALAH"
+        },
         {
             "waktu": "10 Mar 02:53",
             "start_usd": 68426.828125,
@@ -275,5 +335,16 @@
             "status": "BENAR"
         }
     ],
-    "history_6h": []
+    "history_6h": [
+        {
+            "waktu": "09 Mar 22:54",
+            "start_usd": 69336.4765625,
+            "end_usd": 69086.765625,
+            "start_idr": 1173588000.0,
+            "end_idr": 1169361397.001871,
+            "prediksi": "TURUN",
+            "keyakinan": "16.4%",
+            "status": "BENAR"
+        }
+    ]
 }
