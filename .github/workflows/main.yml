@@ -20,13 +20,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.MY_TOKEN }} 
-          fetch-depth: 1 # --- DIPERBAIKI: Ubah ke 1 agar tidak mendownload sejarah masa lalu yang berat ---
+          fetch-depth: 1 # Meringankan beban unduhan
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip' # --- DIPERBAIKI: Mengaktifkan Brankas Cache agar loading secepat kilat ---
+          cache: 'pip' # Mengaktifkan Brankas Cache
 
       - name: Install dependencies
         run: |
@@ -43,12 +43,11 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🤖 Auto-update Jurnal Prediksi AI [skip ci]"
-          file_pattern: 'ai_history_log.csv dashboard_data.json ai_model_1H.pkl ai_model_6H.pkl last_alert_state.json bot_system.log'
+          # PERBAIKAN: *.pkl dihapus dari auto-commit agar akun GitHub tidak kena bloat/banned
+          file_pattern: 'ai_history_log.csv dashboard_data.json last_alert_state.json bot_system.log'
 
       # =========================================================
       # TAHAP 2: KIRIM DATA KE INFINITYFREE VIA FTP
-      # Peringatan: Jika akun web Anda terkena suspend/banned karena terlalu sering upload (spam), 
-      # hapus bagian bawah ini dan gunakan GitHub Pages sebagai gantinya.
       # =========================================================
       - name: 🚀 Upload ke Web InfinityFree
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
