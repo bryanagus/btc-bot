@@ -768,7 +768,7 @@ def main():
         # PERBAIKAN: Mengambil data RSI terakhir untuk logika Anti-FOMO
         rsi_sekarang = df['RSI'].iloc[-1]
         
-        # PERBAIKAN: Logika Rekomendasi dilengkapi Filter Pisau Jatuh
+        # PERBAIKAN: Logika Rekomendasi dilengkapi Filter Pisau Jatuh & Roket Overbought
         if prob_1h > 0.5 and prob_6h > 0.5 and spread_premium <= 0 and fng_val < 75:
             if rsi_sekarang < 35:
                 saran_tindakan = "⚠️ TUNGGU DULU (PISAU JATUH)"
@@ -777,8 +777,12 @@ def main():
                 saran_tindakan = "🟢 STRONG BUY (BELI SEKARANG)"
                 alasan_saran = "AI memprediksi tren global NAIK kuat, dan harga di Indodax saat ini SEDANG DISKON (lebih murah dari global). Ini adalah titik masuk (*entry*) yang sangat ideal."
         elif prob_1h > 0.5 and prob_6h > 0.5 and spread_premium > (global_idr_converted * 0.005):
-            saran_tindakan = "🟡 TAHAN / JUAL SEBAGIAN (TAKE PROFIT)"
-            alasan_saran = "Meski tren global diprediksi NAIK, harga di Indodax saat ini SANGAT MAHAL (Premium tinggi). Daripada beli di pucuk lokal, lebih bijak merealisasikan keuntungan (*take profit*) sebagian."
+            if rsi_sekarang > 70:
+                saran_tindakan = "🤑 TAKE PROFIT MAX (JUAL SEKARANG)"
+                alasan_saran = "Harga sedang melambung tinggi dan grafik menunjukkan Overbought (Jenuh Beli). Bandar bisa membanting harga ke bawah kapan saja. Segera amankan keuntungan (Take Profit) Anda!"
+            else:
+                saran_tindakan = "🟡 TAHAN / JUAL SEBAGIAN (TAKE PROFIT)"
+                alasan_saran = "Meski tren global diprediksi NAIK, harga di Indodax saat ini SANGAT MAHAL (Premium tinggi). Daripada beli di pucuk lokal, lebih bijak merealisasikan keuntungan (*take profit*) sebagian."
         elif prob_1h <= 0.5 and prob_6h <= 0.5 and spread_premium > 0:
             saran_tindakan = "🔴 STRONG SELL (JUAL SEGERA)"
             alasan_saran = "AI memprediksi tren global TURUN tajam, namun harga Indodax saat ini masih ditawar mahal (Premium). Manfaatkan jeda harga ini untuk JUAL sebelum harga lokal ikut runtuh."
@@ -840,8 +844,8 @@ def main():
                 if price_diff >= 0.6:
                     kirim_telegram = True
                     alasan_kirim = f"Pergerakan Harga Drastis ({teks_perubahan})"
-                # PERBAIKAN: Menembus pertahanan Cooldown 1 jam jika ada sinyal darurat
-                elif saran_tindakan in ["🟢 STRONG BUY (BELI SEKARANG)", "🔴 STRONG SELL (JUAL SEGERA)", "⚠️ TUNGGU DULU (PISAU JATUH)"] and saran_tindakan != last_state.get('saran', ''):
+                # PERBAIKAN: Memasukkan sinyal TAKE PROFIT ke dalam daftar Alarm Darurat agar tidak terkena Cooldown
+                elif saran_tindakan in ["🟢 STRONG BUY (BELI SEKARANG)", "🔴 STRONG SELL (JUAL SEGERA)", "⚠️ TUNGGU DULU (PISAU JATUH)", "🤑 TAKE PROFIT MAX (JUAL SEKARANG)", "🟡 TAHAN / JUAL SEBAGIAN (TAKE PROFIT)"] and saran_tindakan != last_state.get('saran', ''):
                     kirim_telegram = True
                     alasan_kirim = f"🚨 PERUBAHAN SINYAL DARURAT!"
                 elif saran_tindakan != last_state.get('saran', ''):
