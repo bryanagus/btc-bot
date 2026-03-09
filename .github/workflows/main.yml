@@ -59,6 +59,8 @@ jobs:
           exclude: |
             **/.git*
             **/.git*/**
+            L-main-LSTM-super-heavy.py
+            L-main-MLP-low-level.py
             main.py
             requirements.txt
             ai_history_log.csv
