@@ -399,7 +399,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     elif actual_end_price < batas_turun_1h: arah_asli = "Turun Signifikan 🩸"
                     else: arah_asli = "Turun Dikit 📉"
                         
-                    if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
+                    # FIX POIN 1: Menyamakan standar evaluasi dengan saat AI belajar (batas naik 0.7%)
+                    batas_target_ai_1h = past_usd_price * 1.007
+                    if (past_prob > 0.5 and actual_end_price > batas_target_ai_1h) or (past_prob <= 0.5 and actual_end_price <= batas_target_ai_1h):
                         hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
                         hasil = f"SALAH ❌ (Realita: {arah_asli})"
@@ -425,7 +427,7 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     
                     actual_end_price = float(df.loc[t_target, 'Close'])
                     
-                    batas_naik_6h = past_usd_price * 1.012
+                    batas_naik_6h = past_usd_price * 1.012 # 1.2%
                     batas_turun_6h = past_usd_price * 0.988
                     
                     if actual_end_price > batas_naik_6h: arah_asli = "Naik Signifikan 🚀"
@@ -433,7 +435,9 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     elif actual_end_price < batas_turun_6h: arah_asli = "Turun Signifikan 🩸"
                     else: arah_asli = "Turun Dikit 📉"
                         
-                    if (past_prob > 0.5 and actual_end_price > past_usd_price) or (past_prob <= 0.5 and actual_end_price <= past_usd_price):
+                    # FIX POIN 1: Menyamakan standar evaluasi dengan saat AI belajar (batas naik 1.2%)
+                    batas_target_ai_6h = past_usd_price * 1.012
+                    if (past_prob > 0.5 and actual_end_price > batas_target_ai_6h) or (past_prob <= 0.5 and actual_end_price <= batas_target_ai_6h):
                         hasil = f"BENAR ✅ (Realita: {arah_asli})"
                     else:
                         hasil = f"SALAH ❌ (Realita: {arah_asli})"
@@ -500,6 +504,10 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
     global_idr_converted = global_usd * kurs_idr
     spread_premium = indodax_idr - global_idr_converted
     
+    # Ambang batas logis untuk Tampilan Dashboard
+    threshold_1h = 0.08
+    threshold_6h = 0.15
+    
     try:
         if not os.path.isfile(HISTORY_FILE): return
         history = pd.read_csv(HISTORY_FILE)
@@ -514,7 +522,7 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
                 "end_usd": row['usd_end_price_1h'],
                 "start_idr": row['idr_start_price'],
                 "end_idr": row['idr_end_price_1h'],
-                "prediksi": "NAIK" if row['prob_1h'] > 0.5 else "TURUN",
+                "prediksi": "NAIK" if row['prob_1h'] > threshold_1h else "TURUN",
                 "keyakinan": f"{row['prob_1h']*100:.1f}%",
                 "status": str(row['result_1h']).split(' ')[0]
             })
@@ -529,7 +537,7 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
                 "end_usd": row['usd_end_price_6h'],
                 "start_idr": row['idr_start_price'],
                 "end_idr": row['idr_end_price_6h'],
-                "prediksi": "NAIK" if row['prob_6h'] > 0.5 else "TURUN",
+                "prediksi": "NAIK" if row['prob_6h'] > threshold_6h else "TURUN",
                 "keyakinan": f"{row['prob_6h']*100:.1f}%",
                 "status": str(row['result_6h']).split(' ')[0]
             })
@@ -549,8 +557,8 @@ def generate_web3_dashboard_data(indodax_idr, global_usd, kurs_idr, prob_1h, pro
             "current_prediction": {
                 "prob_1h": prob_1h,
                 "prob_6h": prob_6h,
-                "arah_1h": "NAIK" if prob_1h > 0.5 else "TURUN",
-                "arah_6h": "NAIK" if prob_6h > 0.5 else "TURUN"
+                "arah_1h": "NAIK" if prob_1h > threshold_1h else "TURUN",
+                "arah_6h": "NAIK" if prob_6h > threshold_6h else "TURUN"
             },
             "stats": {
                 "win_rate_1h": round((total_1h / len(table_1h) * 100) if table_1h else 0, 1),
@@ -582,11 +590,16 @@ def calculate_var_95(price, log_returns_series):
     return var_price
 
 def position_sizing_kelly(prob_1h, prob_6h, atr, risk_multiplier):
+    threshold_avg = (0.08 + 0.15) / 2
     avg_prob = (prob_1h + prob_6h) / 2
-    if avg_prob < 0.5: return 0.0
+    if avg_prob < threshold_avg: return 0.0
+    
     reward, risk = atr * 3.5, atr * 1.5
     if risk <= 0: return 0.0 
-    edge = avg_prob - ((1 - avg_prob) / (reward/risk))
+    
+    # Normalisasi Probabilitas agar Kelly berfungsi untuk batas ambang yang lebih kecil
+    norm_prob = 0.5 + (avg_prob - threshold_avg) 
+    edge = norm_prob - ((1 - norm_prob) / (reward/risk))
     size = min(max(edge, 0), 0.25) * risk_multiplier 
     return round(size * 100, 2)
 
@@ -778,14 +791,18 @@ def main():
         var95_usd = calculate_var_95(global_usd, df["Log_Return"]) 
         var95_idr = var95_usd * kurs_idr
         
-        def get_arah(prob):
-            if prob >= 0.6: return "NAIK KUAT 🚀"
-            elif prob > 0.5: return "Cenderung NAIK 📈"
-            elif prob <= 0.4: return "TURUN KUAT 🚨"
+        # FIX POIN 2: Ambang Batas Keyakinan Beli/Jual
+        threshold_1h = 0.08
+        threshold_6h = 0.15
+
+        def get_arah(prob, threshold):
+            if prob >= (threshold * 1.5): return "NAIK KUAT 🚀"
+            elif prob > threshold: return "Cenderung NAIK 📈"
+            elif prob <= (threshold * 0.5): return "TURUN KUAT 🚨"
             else: return "Cenderung TURUN 📉"
             
-        arah_1h = get_arah(prob_1h)
-        arah_6h = get_arah(prob_6h)
+        arah_1h = get_arah(prob_1h, threshold_1h)
+        arah_6h = get_arah(prob_6h, threshold_6h)
 
         fng_val = df['FnG_Index'].iloc[-1]
         saran_tindakan = ""
@@ -794,7 +811,7 @@ def main():
         rsi_sekarang = df['RSI'].iloc[-1]
         
         # LOGIKA PERTAHANAN MULTI-FILTER (AI + Orderbook + News + RSI)
-        if prob_1h > 0.5 and prob_6h > 0.5 and spread_premium <= 0:
+        if prob_1h > threshold_1h and prob_6h > threshold_6h and spread_premium <= 0:
             if status_berita == "SANGAT NEGATIF 🚨":
                 saran_tindakan = "⚪ WAIT AND SEE (BERITA BURUK)"
                 alasan_saran = "Meski teknikal menunjukkan harga akan Naik, Sentimen Berita Dunia sedang SANGAT BURUK (FUD). Tahan posisi untuk menghindari Dump tiba-tiba."
@@ -807,17 +824,17 @@ def main():
             else:
                 saran_tindakan = "🟢 STRONG BUY (BELI SEKARANG)"
                 alasan_saran = "AI Hybrid memprediksi tren global NAIK kuat, harga Indodax SEDANG DISKON, Tembok Bandar aman, dan Berita mendukung. Titik masuk yang sangat ideal."
-        elif prob_1h > 0.5 and prob_6h > 0.5 and spread_premium > (global_idr_converted * 0.005):
+        elif prob_1h > threshold_1h and prob_6h > threshold_6h and spread_premium > (global_idr_converted * 0.005):
             if rsi_sekarang > 70:
                 saran_tindakan = "🤑 TAKE PROFIT MAX (JUAL SEKARANG)"
                 alasan_saran = "Harga melambung tinggi dan grafik Jenuh Beli (Overbought). Bandar bisa membanting harga ke bawah kapan saja. Segera amankan keuntungan Anda!"
             else:
                 saran_tindakan = "🟡 TAHAN / JUAL SEBAGIAN (TAKE PROFIT)"
                 alasan_saran = "Tren global diprediksi NAIK, tapi harga Indodax saat ini SANGAT MAHAL (Premium tinggi). Lebih bijak merealisasikan keuntungan sebagian daripada beli di pucuk lokal."
-        elif prob_1h <= 0.5 and prob_6h <= 0.5 and spread_premium > 0:
+        elif prob_1h <= threshold_1h and prob_6h <= threshold_6h and spread_premium > 0:
             saran_tindakan = "🔴 STRONG SELL (JUAL SEGERA)"
             alasan_saran = "AI Hybrid memprediksi tren global TURUN tajam, namun harga Indodax saat ini masih ditawar mahal. Manfaatkan jeda harga ini untuk JUAL sebelum harga lokal ikut runtuh."
-        elif prob_1h <= 0.5 and prob_6h <= 0.5 and spread_premium < 0:
+        elif prob_1h <= threshold_1h and prob_6h <= threshold_6h and spread_premium < 0:
             saran_tindakan = "⚪ WAIT AND SEE (JANGAN BELI DULU)"
             alasan_saran = "Memang harga Indodax sedang diskon, tapi prediksi harga global MASIH AKAN TURUN. Tahan peluru cash Anda, kita tunggu harga di titik bottom."
         else:
