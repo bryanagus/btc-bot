@@ -1,0 +1,3 @@
+2026-03-10 15:43:49,815 - ERROR - 
+1 Failed download:
+2026-03-10 15:43:49,815 - ERROR - ['BTC-USD']: TypeError("'Response' object is not subscriptable")
