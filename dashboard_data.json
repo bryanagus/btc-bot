@@ -1,29 +1,89 @@
 {
-    "last_update": "10 March 2026 17:53 WITA",
+    "last_update": "10 March 2026 18:04 WITA",
     "prices": {
-        "indodax_idr": 1203178000.0,
-        "global_usd": 70996.90625,
+        "indodax_idr": 1200778000.0,
+        "global_usd": 71047.1484375,
         "kurs_idr": 16855.0,
-        "global_idr_converted": 1196652854.84375,
-        "spread_premium": 6525145.15625
+        "global_idr_converted": 1197499686.9140625,
+        "spread_premium": 3278313.0859375
     },
     "current_prediction": {
-        "prob_1h": 0.07552145757581755,
-        "prob_6h": 0.14875754875033403,
+        "prob_1h": 0.0671898233164015,
+        "prob_6h": 0.13140704588607627,
         "arah_1h": "DOWNTREND",
         "arah_6h": "DOWNTREND"
     },
     "stats": {
-        "win_rate_1h": 82.6,
-        "win_rate_6h": 50.0,
+        "win_rate_1h": 84.6,
+        "win_rate_6h": 36.4,
         "risk_multiplier": 1.0
     },
     "indicators": {
-        "rsi": 69.25,
-        "adx": 41.7,
+        "rsi": 69.56,
+        "adx": 43.19,
         "trend": "UPTREND"
     },
     "history_1h": [
+        {
+            "waktu": "10 Mar 17:53",
+            "start_usd": 70996.90625,
+            "end_usd": 71047.1484375,
+            "start_idr": 1203178000.0,
+            "end_idr": 1204029449.7020335,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "7.6%",
+            "status": "SUCCESS"
+        },
+        {
+            "waktu": "10 Mar 17:43",
+            "start_usd": 71130.484375,
+            "end_usd": 71047.1484375,
+            "start_idr": 1202949000.0,
+            "end_idr": 1201539634.0500765,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "6.9%",
+            "status": "SUCCESS"
+        },
+        {
+            "waktu": "10 Mar 17:33",
+            "start_usd": 71207.8515625,
+            "end_usd": 71047.1484375,
+            "start_idr": 1204748000.0,
+            "end_idr": 1202029103.639708,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "7.6%",
+            "status": "SUCCESS"
+        },
+        {
+            "waktu": "10 Mar 17:23",
+            "start_usd": 70962.9609375,
+            "end_usd": 71047.1484375,
+            "start_idr": 1199500000.0,
+            "end_idr": 1200923036.819714,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "7.6%",
+            "status": "SUCCESS"
+        },
+        {
+            "waktu": "10 Mar 17:14",
+            "start_usd": 70774.25,
+            "end_usd": 71047.1484375,
+            "start_idr": 1197000000.0,
+            "end_idr": 1201615512.417122,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "6.9%",
+            "status": "SUCCESS"
+        },
+        {
+            "waktu": "10 Mar 17:04",
+            "start_usd": 70724.71875,
+            "end_usd": 71047.1484375,
+            "start_idr": 1196806000.0,
+            "end_idr": 1202262165.69989,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "7.6%",
+            "status": "SUCCESS"
+        },
         {
             "waktu": "10 Mar 16:53",
             "start_usd": 70855.53125,
@@ -486,6 +546,66 @@
         }
     ],
     "history_6h": [
+        {
+            "waktu": "10 Mar 12:54",
+            "start_usd": 69868.8046875,
+            "end_usd": 71047.1484375,
+            "start_idr": 1182424000.0,
+            "end_idr": 1202365688.375546,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "14.2%",
+            "status": "FAILED"
+        },
+        {
+            "waktu": "10 Mar 12:44",
+            "start_usd": 69982.78125,
+            "end_usd": 71047.1484375,
+            "start_idr": 1183400000.0,
+            "end_idr": 1201398314.8310142,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "14.2%",
+            "status": "FAILED"
+        },
+        {
+            "waktu": "10 Mar 12:33",
+            "start_usd": 69792.3359375,
+            "end_usd": 71047.1484375,
+            "start_idr": 1183074000.0,
+            "end_idr": 1204344760.2300978,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "14.2%",
+            "status": "FAILED"
+        },
+        {
+            "waktu": "10 Mar 12:23",
+            "start_usd": 69635.421875,
+            "end_usd": 71047.1484375,
+            "start_idr": 1179234000.0,
+            "end_idr": 1203140740.5119116,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "14.2%",
+            "status": "FAILED"
+        },
+        {
+            "waktu": "10 Mar 12:14",
+            "start_usd": 69711.875,
+            "end_usd": 71047.1484375,
+            "start_idr": 1180960000.0,
+            "end_idr": 1203580314.2398622,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "14.2%",
+            "status": "FAILED"
+        },
+        {
+            "waktu": "10 Mar 12:03",
+            "start_usd": 69474.1640625,
+            "end_usd": 71047.1484375,
+            "start_idr": 1175000000.0,
+            "end_idr": 1201603510.3202145,
+            "prediksi": "DOWNTREND",
+            "keyakinan": "14.2%",
+            "status": "FAILED"
+        },
         {
             "waktu": "10 Mar 11:53",
             "start_usd": 69470.84375,
