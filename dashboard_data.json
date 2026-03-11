@@ -1,15 +1,15 @@
 {
-    "last_update": "11 March 2026 10:43 WITA",
+    "last_update": "11 March 2026 10:54 WITA",
     "prices": {
-        "indodax_idr": 1178928000.0,
-        "global_usd": 69757.515625,
+        "indodax_idr": 1179548000.0,
+        "global_usd": 69726.4921875,
         "kurs_idr": 16874.0,
-        "global_idr_converted": 1177088318.65625,
-        "spread_premium": 1839681.34375
+        "global_idr_converted": 1176564829.171875,
+        "spread_premium": 2983170.828125
     },
     "current_prediction": {
-        "prob_1h": 0.06535890818409176,
-        "prob_6h": 0.14016274902002732,
+        "prob_1h": 0.06237089398302575,
+        "prob_6h": 0.123630928022578,
         "arah_1h": "DOWNTREND",
         "arah_6h": "DOWNTREND"
     },
@@ -19,8 +19,8 @@
         "risk_multiplier": 1.0
     },
     "indicators": {
-        "rsi": 47.98,
-        "adx": 24.67,
+        "rsi": 47.42,
+        "adx": 23.46,
         "trend": "UPTREND"
     },
     "history_1h": [
