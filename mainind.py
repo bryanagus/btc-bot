@@ -78,54 +78,67 @@ def fetch_fear_and_greed():
 
 def fetch_data_with_retry(days_back=60):
     """
-    TWEAK #3: Mengambil data Candlestick (OHLCV) LANGSUNG dari Indodax API (IDR).
-    Data YFinance hanya dipanggil ringan untuk mengecek Global Arbitrage.
+    Mengambil data Candlestick (OHLCV) 100% dari API V2 Indodax.
+    Menggunakan sistem Pagination/Chunk agar aman dari limit 180req/min.
+    YFinance ditinggalkan untuk grafik, HANYA dipakai untuk tarik Kurs IDR.
     """
     end_time = int(time.time())
     start_time = end_time - (days_back * 24 * 60 * 60)
-    url = f"https://indodax.com/tradingview/history?symbol=BTCIDR&resolution=60&from={start_time}&to={end_time}"
     
-    delays = [5, 15, 30]
-    for attempt, delay in enumerate(delays + [0]):
-        try:
-            # 1. Fetch Data Indodax Native IDR
-            resp = requests.get(url, headers=HEADERS_BOT, timeout=10).json()
-            if resp.get('s') == 'ok':
-                df = pd.DataFrame({
-                    'Open': resp['o'],
-                    'High': resp['h'],
-                    'Low': resp['l'],
-                    'Close': resp['c'],
-                    'Volume': resp['v']
-                }, index=pd.to_datetime(resp['t'], unit='s', utc=True))
-            else:
-                raise Exception("Indodax History API Error")
-
-            # 2. Ambil kurs YFinance HANYA untuk fitur Arbitrase / Spread Dashboard
+    chunk_size = 15 * 24 * 60 * 60 
+    all_data = []
+    
+    current_start = start_time
+    while current_start < end_time:
+        current_end = min(current_start + chunk_size, end_time)
+        url = f"https://indodax.com/tradingview/history_v2?symbol=BTCIDR&tf=60&from={current_start}&to={current_end}"
+        
+        for attempt in range(4):
             try:
-                idr_data = yf.download('IDR=X', period='5d', progress=False)
-                if isinstance(idr_data.columns, pd.MultiIndex): 
-                    idr_data.columns = idr_data.columns.droplevel(1)
-                kurs_idr = float(idr_data['Close'].dropna().iloc[-1])
-            except Exception:
-                kurs_idr = 15500.0
+                resp = requests.get(url, headers=HEADERS_BOT, timeout=10)
+                data = resp.json()
                 
-            try:
-                btc_usd_data = yf.download('BTC-USD', period='5d', progress=False)
-                if isinstance(btc_usd_data.columns, pd.MultiIndex):
-                    btc_usd_data.columns = btc_usd_data.columns.droplevel(1)
-                global_usd = float(btc_usd_data['Close'].dropna().iloc[-1])
-            except Exception:
-                global_usd = float(df['Close'].iloc[-1]) / kurs_idr
-
-            indodax_live_idr = float(df['Close'].iloc[-1])
-            return df, kurs_idr, global_usd, indodax_live_idr
-            
-        except Exception as e:
-            if attempt == len(delays):
-                diagnostics["api"] = "Failed (Indodax API Down)"
-                raise Exception(f"API Timeout: {e}")
-            time.sleep(delay)
+                if isinstance(data, list):
+                    all_data.extend(data)
+                    break 
+                else:
+                    raise Exception("Format bukan JSON List")
+            except Exception as e:
+                if attempt == 3:
+                    diagnostics["api"] = "Indodax V2 API Error"
+                    raise Exception(f"Gagal narik chunk V2: {e}")
+                time.sleep(5)
+        
+        current_start = current_end + 1
+        time.sleep(0.5) 
+        
+    if not all_data:
+        raise Exception("Gagal menarik data dari Indodax V2 sama sekali")
+        
+    df = pd.DataFrame(all_data)
+    
+    df['Time'] = pd.to_datetime(df['Time'], unit='s', utc=True)
+    df.set_index('Time', inplace=True)
+    
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        df[col] = df[col].astype(float)
+        
+    df.sort_index(inplace=True)
+    df = df[~df.index.duplicated(keep='last')]
+    
+    indodax_live_idr = float(df['Close'].iloc[-1])
+    
+    try:
+        idr_data = yf.download('IDR=X', period='5d', progress=False)
+        if isinstance(idr_data.columns, pd.MultiIndex): 
+            idr_data.columns = idr_data.columns.droplevel(1)
+        kurs_idr = float(idr_data['Close'].dropna().iloc[-1])
+    except Exception:
+        kurs_idr = 15500.0
+        
+    global_usd = indodax_live_idr / kurs_idr
+    
+    return df, kurs_idr, global_usd, indodax_live_idr
 
 def fetch_indodax_depth(current_idr_price):
     try:
@@ -229,7 +242,6 @@ def engineer_features(df, fng_dict):
     df['FnG_Index'] = df['FnG_Index'].ffill().bfill().fillna(50.0) 
     df.drop(columns=['Date_Only'], inplace=True)
     
-    # TWEAK #1: Menyesuaikan target AI dengan Realita Fee Taker Indodax (Minimal 0.8% untuk 1H)
     df["Target_1H"] = (df["Close"].shift(-1) > (df["Close"] * 1.008)).astype(float)
     df["Target_6H"] = (df["Close"].shift(-6) > (df["Close"] * 1.015)).astype(float)
     
@@ -286,7 +298,6 @@ def train_honest_model(df, features, target_col, shift_len, model_name, current_
         mlp_cal = CalibratedClassifierCV(mlp_pipeline, method="sigmoid", cv=tscv)
         mlp_cal.fit(X_train, y_train)
         
-        # TWEAK #2: Penanganan Imbalanced Target XGBoost
         pos_count = sum(y_train)
         neg_count = len(y_train) - pos_count
         ratio_weight = neg_count / pos_count if pos_count > 0 else 1.0
@@ -312,6 +323,21 @@ def train_honest_model(df, features, target_col, shift_len, model_name, current_
     prob_xgb = xgb_cal.predict_proba(X_live)[0, 1]
     prob_final = (prob_xgb * 0.50) + (prob_mlp * 0.30) + (prob_lr * 0.20)
     return prob_final
+
+def get_historical_indodax_price(t_target_utc, past_usd, past_idr, actual_usd):
+    try:
+        t_unix = int(t_target_utc.timestamp())
+        url = f"https://indodax.com/tradingview/history_v2?symbol=BTCIDR&tf=60&from={t_unix-3600}&to={t_unix+3600}"
+        resp = requests.get(url, headers=HEADERS_BOT, timeout=10).json()
+        if isinstance(resp, list):
+            for item in resp:
+                if abs(item.get('Time', 0) - t_unix) <= 120:
+                    return float(item.get('Close', past_idr))
+    except:
+        pass
+    
+    past_ratio = past_idr / past_usd if past_usd else 15500
+    return actual_usd * past_ratio
 
 def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr, global_usd):
     waktu_eksekusi = datetime.now(pytz.utc)
@@ -347,7 +373,6 @@ def manage_history_and_evaluate(df, prob_1h, prob_6h, indodax_live_idr, kurs_idr
                     actual_end_price_idr = float(df.loc[t_target, 'Close'])
                     actual_end_price_usd = actual_end_price_idr / kurs_idr
                     
-                    # Evaluasi murni berdasarkan IDR (Target ML Baru)
                     batas_naik_1h = past_idr_price * 1.008 
                     batas_turun_1h = past_idr_price * 0.992
                     
@@ -540,7 +565,6 @@ def plot_professional_analysis(df, prob_1h, prob_6h, atr, base_filename="chart_m
     plot_data.index = plot_data.index.tz_convert('Asia/Makassar')
     plt.style.use('seaborn-v0_8-darkgrid')
     fig = plt.figure(figsize=(14, 8))
-    # TWEAK Visualisasi: Label kini IDR
     plt.plot(plot_data.index, plot_data['Close'], label='Indodax Price (IDR)', color='black', linewidth=2, zorder=5)
     plt.plot(plot_data.index, plot_data['VWAP_24'], label='VWAP', color='#ff7f0e', linestyle='-.')
     last_time = plot_data.index[-1]
@@ -632,18 +656,33 @@ def plot_dashboard_indicators(df, base_filename="chart_indicators"):
         diagnostics["chart"] = f"Render Failed: {e}"
 
 def send_telegram_messages(pesan_utama, chart_paths, pesan_diag="", pesan_saran=""):
-    if not TELEGRAM_BOT_TOKEN: return
+    if not TELEGRAM_BOT_TOKEN: 
+        print("\n" + "="*50)
+        print("📱 SIMULASI TELEGRAM (MODE TESTING) 📱")
+        print("="*50)
+        print(pesan_utama)
+        if pesan_diag.strip() != "": 
+            print("\n[DIAGNOSTIK]:\n" + pesan_diag)
+        if pesan_saran.strip() != "": 
+            print("\n[SARAN]:\n" + pesan_saran)
+        print(f"\n📸 Chart yang berhasil di-generate: {', '.join(chart_paths)}")
+        print("="*50 + "\n")
+        return
+
     url_msg = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     url_photo = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-    requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_utama, 'parse_mode': 'Markdown'})
-    for path in chart_paths:
-        if os.path.exists(path):
-            with open(path, 'rb') as photo:
-                requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
-    if pesan_diag.strip() != "":
-        requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_diag, 'parse_mode': 'Markdown'})
-    if pesan_saran.strip() != "":
-        requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_saran, 'parse_mode': 'Markdown'})
+    try:
+        requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_utama, 'parse_mode': 'Markdown'})
+        for path in chart_paths:
+            if os.path.exists(path):
+                with open(path, 'rb') as photo:
+                    requests.post(url_photo, data={'chat_id': TELEGRAM_CHAT_ID}, files={'photo': photo})
+        if pesan_diag.strip() != "":
+            requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_diag, 'parse_mode': 'Markdown'})
+        if pesan_saran.strip() != "":
+            requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_saran, 'parse_mode': 'Markdown'})
+    except Exception as e:
+        print(f"Gagal mengirim ke Telegram: {e}")
 
 def main():
     sekarang_wita = datetime.now(pytz.timezone('Asia/Makassar'))
@@ -679,7 +718,6 @@ def main():
         generate_web3_dashboard_data(indodax_live_idr, global_usd, kurs_idr, prob_1h, prob_6h, df, risk_mult, threshold_1h, threshold_6h)
         exposure = position_sizing_kelly(prob_1h, prob_6h, current_atr, risk_mult, threshold_1h, threshold_6h)
         
-        # Karena df sekarang IDR, hitungan var langsung IDR
         var95_idr = calculate_var_95(indodax_live_idr, df["Log_Return"]) 
         
         def get_arah(prob, threshold):
@@ -795,6 +833,9 @@ def main():
         plot_zoomed_analysis(df, prob_1h, prob_6h, current_atr, "chart_zoom")
         plot_dashboard_indicators(df, "chart_indicators")
         
+        if not TELEGRAM_BOT_TOKEN:
+            kirim_telegram = True
+            
         if kirim_telegram:
             new_last_hourly = waktu_sekarang_str if is_routine_update else last_state.get('last_hourly_report', '')
             with open(ALERT_FILE, 'w') as f:
@@ -846,7 +887,13 @@ def main():
             send_telegram_messages(pesan_utama, ["chart_main.png", "chart_zoom.png", "chart_indicators.png"], pesan_diag, pesan_saran)
     except Exception as fatal_e:
         pesan_fatal = f"*SYSTEM FAILURE*\n\nCause: {str(fatal_e)}\nTime: {sekarang_wita.strftime('%H:%M WITA')}"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_fatal})
+        if TELEGRAM_BOT_TOKEN:
+            try:
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={'chat_id': TELEGRAM_CHAT_ID, 'text': pesan_fatal})
+            except:
+                pass
+        else:
+            print(f"\n🚨 FATAL ERROR TERDETEKSI:\n{pesan_fatal}")
 
 if __name__ == "__main__":
     main()
