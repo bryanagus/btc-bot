@@ -1,0 +1,46 @@
+name: Cuci Gudang Git History (Bulanan)
+
+on:
+  schedule:
+    # Berjalan otomatis setiap tanggal 1 jam 00:00 UTC (Awal Bulan)
+    - cron: '0 0 1 * *'
+  workflow_dispatch: # Tombol manual jika kamu ingin mencobanya kapan saja
+
+permissions:
+  contents: write
+
+jobs:
+  reset-history:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout repository menggunakan token master kamu
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_TOKEN }}
+          fetch-depth: 0 # Ambil semua history untuk dihapus
+
+      # 2. Proses Cuci Gudang (Menghapus Riwayat Commit)
+      - name: Menghapus Riwayat Git & Force Push
+        run: |
+          # Konfigurasi identitas robot pembersih
+          git config --global user.name "Bot-Pembersih"
+          git config --global user.email "bot@github.com"
+          
+          # Membuat cabang baru yang kosong tanpa masa lalu (orphan branch)
+          git checkout --orphan cabang_baru
+          
+          # Memasukkan semua file versi TERBARU (kode, csv, pkl, json)
+          git add -A
+          
+          # Membuat catatan sejarah pertama yang baru
+          git commit -am "🧹 Cuci Gudang Otomatis: Memori Git direset ke 0 MB (Awal Bulan)"
+          
+          # Menghapus cabang utama yang lama (yang penuh memori)
+          git branch -D main
+          
+          # Mengubah nama cabang baru menjadi cabang utama (main)
+          git branch -m main
+          
+          # Mendorong paksa cabang baru ke GitHub (menimpa yang lama)
+          git push -f origin main

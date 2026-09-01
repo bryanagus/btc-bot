@@ -1,0 +1,83 @@
+name: Bot Trading BTC Pro WITA
+
+on:
+  workflow_dispatch:
+  #schedule:
+    #- cron: '*/5 * * * *' # Otomatis jalan tiap 5 menit
+
+concurrency:
+  group: bot-trading-group
+  cancel-in-progress: false 
+
+permissions:
+  contents: write
+
+# SOLUSI 2026: Memaksa semua actions lama menggunakan Node.js 24
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_TOKEN }} 
+          fetch-depth: 1
+
+      # UPDATE: Naikkan ke v5 agar lebih kompatibel dengan Node terbaru
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      # INSTALASI APLIKASI TESSERACT OCR
+      - name: Install Tesseract OCR
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-eng tesseract-ocr-ind
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          
+      - name: Run Script
+        run: python main.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Auto Save CSV & JSON to GitHub
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🤖 Auto-update Database & Jurnal Grafik [skip ci]"
+
+      - name: 🚀 Upload ke Web InfinityFree
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          server-dir: htdocs/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            L-main-LSTM-super-heavy.py
+            L-main-MLP-low-level.py
+            main.py
+            requirements.txt
+            ai_history_log.csv
+            indodax_ohlcv.csv
+            README.md
+            *.png
+            *.pkl
+            *.py
+            *.keras
+            last_alert_state.json
+            bot_system.log
+            history_charts/**
+            history_charts/

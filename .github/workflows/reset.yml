@@ -1,0 +1,59 @@
+name: Reset Repository & Hapus Riwayat Actions
+
+on:
+  workflow_dispatch: # Ini memastikan action HANYA bisa dijalankan secara manual
+
+jobs:
+  hard-reset:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Diperlukan untuk menghapus file dan commit
+      actions: write    # Diperlukan untuk menghapus riwayat workflow
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Bersihkan File Hasil Bot
+        run: |
+          # Mengaktifkan extglob untuk mempermudah pengecualian file
+          shopt -s extglob
+          
+          echo "Menghapus semua file kecuali file utama..."
+          # PERHATIAN: Semua file akan dihapus kecuali yang ada di dalam tanda kurung ini
+          rm -rf !(.|..|.git|.github|main.py|requirements.txt|README.md)
+          
+          echo "Sisa file di dalam repository:"
+          ls -la
+
+      - name: Commit dan Push Perubahan
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          
+          # Mengecek apakah ada file yang benar-benar terhapus untuk di-commit
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "🧹 Cuci gudang: Menghapus semua file hasil generate bot"
+            git push
+            echo "Berhasil menghapus file dan melakukan push."
+          else
+            echo "Repositori sudah bersih, tidak ada file yang perlu di-commit."
+          fi
+
+      - name: Hapus Riwayat Log Workflow Runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Mengambil dan menghapus riwayat runs (ini mungkin memakan waktu sebentar)..."
+          
+          # Mengambil semua ID dari riwayat run yang ada di repo ini
+          RUN_IDS=$(gh api repos/${{ github.repository }}/actions/runs --paginate -q '.workflow_runs[].id')
+          
+          # Melakukan perulangan untuk menghapus log satu per satu
+          for run_id in $RUN_IDS; do
+            echo "Menghapus riwayat log ID: $run_id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/runs/$run_id --silent || true
+          done
+          
+          echo "Pembersihan riwayat log selesai!"
