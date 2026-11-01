@@ -1,0 +1,11 @@
+pandas>=2.2.2,<3.0.0
+numpy>=1.26.4,<2.0.0
+matplotlib>=3.9.0
+pytz>=2024.2
+requests>=2.32.3
+scikit-learn>=1.5.0
+vaderSentiment==3.3.2
+pillow>=10.4.0
+xgboost>=2.1.0
+tensorflow>=2.16.1
+pytesseract>=0.3.13
